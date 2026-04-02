@@ -1,0 +1,8 @@
+[package]
+name = "vmf-ledger"
+version = "0.1.0"
+edition = "2024"
+description = "Reversible VMF edits."
+
+[dependencies]
+vmf-forge = { path = "../source-vmf", features = ["serialization"] } # temp before release
