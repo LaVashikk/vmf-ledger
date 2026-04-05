@@ -11,6 +11,8 @@
 //! 1. **Id** - the `id` keyvalue. Exact, O(1), but Hammer may renumber.
 //! 2. **Signature** - the discriminating keyvalues taken together. Exact, O(1),
 //!    and only trusted when the signature is unique on both sides.
+//! 3. **Similarity** - Jaccard over every keyvalue. O(k^2) per bucket, but it
+//!    only ever sees what the exact stages could not place.
 
 use std::collections::HashMap;
 
@@ -22,9 +24,10 @@ pub const DEFAULT_SIGNATURE_KEYS: &[&str] = &["classname", "targetname", "origin
 /// Which stage produced a pair.
 ///
 /// Ordered by trustworthiness: a caller that cannot afford a wrong pair - a
-/// rollback, say - can reject anything below [`Confidence::Id`].
+/// rollback, say - can reject anything below [`Confidence::Signature`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Confidence {
+    Similarity,
     Signature,
     Id,
 }
@@ -36,6 +39,8 @@ pub struct Pair {
     pub old: usize,
     pub new: usize,
     pub confidence: Confidence,
+    /// Jaccard score for [`Confidence::Similarity`], `1.0` for the exact stages.
+    pub score: f32,
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -50,12 +55,21 @@ pub struct Matching {
 #[derive(Debug, Clone)]
 pub struct MatchOptions<'a> {
     pub signature_keys: &'a [&'a str],
+    /// Keys the similarity stage must ignore.
+    ///
+    /// An identifier is unique per block, so once the id stage has failed it is
+    /// known not to match, and leaving it in only drags every score down.
+    pub ignore_keys: &'a [&'a str],
+    /// Two blocks scoring below this are treated as unrelated.
+    pub min_score: f32,
 }
 
 impl Default for MatchOptions<'_> {
     fn default() -> Self {
         Self {
             signature_keys: DEFAULT_SIGNATURE_KEYS,
+            ignore_keys: &["id"],
+            min_score: 0.5,
         }
     }
 }
@@ -72,6 +86,7 @@ pub fn match_blocks(old: &[VmfBlock], new: &[VmfBlock], opts: &MatchOptions<'_>)
         state.pair_on(&group, Confidence::Signature, |b| {
             signature(b, opts.signature_keys)
         });
+        state.pair_by_similarity(&group, opts.min_score, opts.ignore_keys);
     }
 
     state.finish()
@@ -181,17 +196,54 @@ impl<'a> State<'a> {
             if olds.len() != 1 || news.len() != 1 {
                 continue;
             }
-            self.take(olds[0], news[0], confidence);
+            self.take(olds[0], news[0], confidence, 1.0);
         }
     }
 
-    fn take(&mut self, old: usize, new: usize, confidence: Confidence) {
+    /// Greedy best-first pairing of whatever is left.
+    fn pair_by_similarity(&mut self, group: &Group, min_score: f32, ignored: &[&str]) {
+        let olds: Vec<usize> = group
+            .old
+            .iter()
+            .copied()
+            .filter(|&i| !self.old_taken[i])
+            .collect();
+        let news: Vec<usize> = group
+            .new
+            .iter()
+            .copied()
+            .filter(|&j| !self.new_taken[j])
+            .collect();
+        if olds.is_empty() || news.is_empty() {
+            return;
+        }
+
+        // The one quadratic step in the module, written as map/collect so it
+        // becomes `par_iter` the day a real map shows it matters.
+        let mut scored: Vec<(f32, usize, usize)> = olds
+            .iter()
+            .flat_map(|&i| news.iter().map(move |&j| (i, j)))
+            .map(|(i, j)| (jaccard(&self.old[i], &self.new[j], ignored), i, j))
+            .filter(|&(score, ..)| score >= min_score)
+            .collect();
+
+        scored.sort_unstable_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+        for (score, i, j) in scored {
+            if self.old_taken[i] || self.new_taken[j] {
+                continue;
+            }
+            self.take(i, j, Confidence::Similarity, score);
+        }
+    }
+
+    fn take(&mut self, old: usize, new: usize, confidence: Confidence, score: f32) {
         self.old_taken[old] = true;
         self.new_taken[new] = true;
         self.pairs.push(Pair {
             old,
             new,
             confidence,
+            score,
         });
     }
 
@@ -207,4 +259,30 @@ impl<'a> State<'a> {
             pairs: self.pairs,
         }
     }
+}
+
+/// Unweighted Jaccard over keyvalue pairs: shared over union, in `0.0..=1.0`.
+fn jaccard(a: &VmfBlock, b: &VmfBlock, ignored: &[&str]) -> f32 {
+    let mut shared = 0.0;
+    let mut union = 0.0;
+
+    for (k, v) in &a.key_values {
+        if ignored.contains(&k.as_str()) {
+            continue;
+        }
+        union += 1.0;
+        if b.key_values.get(k).is_some_and(|other| other == v) {
+            shared += 1.0;
+        }
+    }
+    for (k, v) in &b.key_values {
+        if ignored.contains(&k.as_str()) {
+            continue;
+        }
+        if a.key_values.get(k).is_none_or(|other| other != v) {
+            union += 1.0;
+        }
+    }
+
+    if union == 0.0 { 0.0 } else { shared / union }
 }
