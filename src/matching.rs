@@ -11,8 +11,8 @@
 //! 1. **Id** - the `id` keyvalue. Exact, O(1), but Hammer may renumber.
 //! 2. **Signature** - the discriminating keyvalues taken together. Exact, O(1),
 //!    and only trusted when the signature is unique on both sides.
-//! 3. **Similarity** - Jaccard over every keyvalue. O(k^2) per bucket, but it
-//!    only ever sees what the exact stages could not place.
+//! 3. **Similarity** - weighted Jaccard over every keyvalue. O(k^2) per bucket,
+//!    but it only ever sees what the exact stages could not place.
 
 use std::collections::HashMap;
 
@@ -57,8 +57,10 @@ pub struct MatchOptions<'a> {
     pub signature_keys: &'a [&'a str],
     /// Keys the similarity stage must ignore.
     ///
-    /// An identifier is unique per block, so once the id stage has failed it is
-    /// known not to match, and leaving it in only drags every score down.
+    /// An identifier is unique per block, so rarity weighting hands it the
+    /// largest weight of all - and once the id stage has failed it is known not
+    /// to match, so that weight lands entirely in the union and drags every
+    /// score towards zero.
     pub ignore_keys: &'a [&'a str],
     /// Two blocks scoring below this are treated as unrelated.
     pub min_score: f32,
@@ -218,12 +220,18 @@ impl<'a> State<'a> {
             return;
         }
 
+        let weights = Weights::build(
+            olds.iter().map(|&i| &self.old[i]),
+            news.iter().map(|&j| &self.new[j]),
+            ignored,
+        );
+
         // The one quadratic step in the module, written as map/collect so it
         // becomes `par_iter` the day a real map shows it matters.
         let mut scored: Vec<(f32, usize, usize)> = olds
             .iter()
             .flat_map(|&i| news.iter().map(move |&j| (i, j)))
-            .map(|(i, j)| (jaccard(&self.old[i], &self.new[j], ignored), i, j))
+            .map(|(i, j)| (weights.score(&self.old[i], &self.new[j]), i, j))
             .filter(|&(score, ..)| score >= min_score)
             .collect();
 
@@ -261,28 +269,66 @@ impl<'a> State<'a> {
     }
 }
 
-/// Unweighted Jaccard over keyvalue pairs: shared over union, in `0.0..=1.0`.
-fn jaccard(a: &VmfBlock, b: &VmfBlock, ignored: &[&str]) -> f32 {
-    let mut shared = 0.0;
-    let mut union = 0.0;
+/// Inverse document frequency over keyvalue pairs.
+///
+/// A pair every block carries (`"visgroupshown" "1"`) says nothing about
+/// identity; one only two blocks carry (`"origin" "512 0 64"`) says almost
+/// everything. Weighting by rarity is what keeps the score meaningful on maps
+/// where most entities are near-identical props.
+struct Weights<'a> {
+    df: HashMap<(&'a str, &'a str), u32>,
+    ignored: &'a [&'a str],
+}
 
-    for (k, v) in &a.key_values {
-        if ignored.contains(&k.as_str()) {
-            continue;
+impl<'a> Weights<'a> {
+    fn build(
+        old: impl Iterator<Item = &'a VmfBlock>,
+        new: impl Iterator<Item = &'a VmfBlock>,
+        ignored: &'a [&'a str],
+    ) -> Self {
+        let mut df: HashMap<(&str, &str), u32> = HashMap::new();
+        for block in old.chain(new) {
+            for (k, v) in &block.key_values {
+                if ignored.contains(&k.as_str()) {
+                    continue;
+                }
+                *df.entry((k.as_str(), v.as_str())).or_insert(0) += 1;
+            }
         }
-        union += 1.0;
-        if b.key_values.get(k).is_some_and(|other| other == v) {
-            shared += 1.0;
-        }
-    }
-    for (k, v) in &b.key_values {
-        if ignored.contains(&k.as_str()) {
-            continue;
-        }
-        if a.key_values.get(k).is_none_or(|other| other != v) {
-            union += 1.0;
-        }
+        Self { df, ignored }
     }
 
-    if union == 0.0 { 0.0 } else { shared / union }
+    fn weight(&self, k: &str, v: &str) -> f32 {
+        // A miss means the pair was ignored or came from another corpus; either
+        // way treating it as unique is the conservative reading.
+        let df = self.df.get(&(k, v)).copied().unwrap_or(1);
+        1.0 / df as f32
+    }
+
+    /// Weighted Jaccard: shared weight over union weight, in `0.0..=1.0`.
+    fn score(&self, a: &VmfBlock, b: &VmfBlock) -> f32 {
+        let mut shared = 0.0;
+        let mut union = 0.0;
+
+        for (k, v) in &a.key_values {
+            if self.ignored.contains(&k.as_str()) {
+                continue;
+            }
+            let w = self.weight(k, v);
+            union += w;
+            if b.key_values.get(k).is_some_and(|other| other == v) {
+                shared += w;
+            }
+        }
+        for (k, v) in &b.key_values {
+            if self.ignored.contains(&k.as_str()) {
+                continue;
+            }
+            if a.key_values.get(k).is_none_or(|other| other != v) {
+                union += self.weight(k, v);
+            }
+        }
+
+        if union == 0.0 { 0.0 } else { shared / union }
+    }
 }
