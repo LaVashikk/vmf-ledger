@@ -6,3 +6,4 @@ description = "Reversible VMF edits."
 
 [dependencies]
 vmf-forge = { path = "../source-vmf", features = ["serialization"] } # temp before release
+serde = { version = "1.0", features = ["derive"] }
