@@ -3,7 +3,9 @@
 //! Only entities are tracked. That is not a shortcut around hard work but the
 //! honest boundary of what can be rolled back: `Side` and friends are typed
 //! structs rather than keyvalue maps, so a generic op cannot address a field
-//! inside them.
+//! inside them. Anything else that changed is reported as untracked and the
+//! caller is expected to refuse the export rather than promise a rollback it
+//! cannot deliver.
 
 use indexmap::IndexMap;
 use vmf_forge::VmfBlock;
@@ -26,6 +28,8 @@ pub struct Mark {
 pub struct Diff {
     pub ops: Vec<Op>,
     pub marks: Vec<Mark>,
+    /// Human-readable descriptions of changes outside the tracked scope.
+    pub untracked: Vec<String>,
 }
 
 pub fn diff(original: &VmfFile, working: &VmfFile) -> Diff {
@@ -46,6 +50,7 @@ pub fn diff(original: &VmfFile, working: &VmfFile) -> Diff {
         &mut tokens,
         &mut out,
     );
+    note_untracked(original, working, &mut out.untracked);
 
     out
 }
@@ -86,6 +91,7 @@ fn diff_bucket(
                 new: after.connections.clone(),
             });
         }
+        note_untracked_entity(before, after, &mut out.untracked);
 
         if ops.is_empty() {
             continue;
@@ -174,5 +180,41 @@ fn set_token(op: &mut Op, token: &str) {
         | Op::Connections { at, .. }
         | Op::AddEntity { at, .. }
         | Op::RemoveEntity { at, .. } => *at = token.to_string(),
+    }
+}
+
+fn note_untracked_entity(before: &Entity, after: &Entity, out: &mut Vec<String>) {
+    let id = before.id();
+    if before.solids != after.solids {
+        out.push(format!("entity {id}: solids changed"));
+    }
+    if before.editor != after.editor {
+        out.push(format!("entity {id}: editor block changed"));
+    }
+    if before.extra != after.extra {
+        out.push(format!("entity {id}: unmodelled blocks changed"));
+    }
+}
+
+fn note_untracked(original: &VmfFile, working: &VmfFile, out: &mut Vec<String>) {
+    let sections: [(&str, bool); 7] = [
+        ("world", original.world != working.world),
+        ("versioninfo", original.versioninfo != working.versioninfo),
+        ("visgroups", original.visgroups != working.visgroups),
+        (
+            "viewsettings",
+            original.viewsettings != working.viewsettings,
+        ),
+        ("cameras", original.cameras != working.cameras),
+        ("cordons", original.cordons != working.cordons),
+        (
+            "extra blocks",
+            original.extra_blocks != working.extra_blocks,
+        ),
+    ];
+    for (name, changed) in sections {
+        if changed {
+            out.push(format!("{name} changed"));
+        }
     }
 }
