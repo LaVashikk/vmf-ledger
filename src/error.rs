@@ -1,0 +1,28 @@
+//! Everything that can go wrong.
+//!
+//! These messages are read by whoever runs the tool, not by whoever wrote it,
+//! so each one names the file and the tool that left the mark.
+
+use std::path::PathBuf;
+
+#[derive(Debug, thiserror::Error)]
+pub enum LedgerError {
+    #[error("{path}: {source}")]
+    SidecarIo {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    #[error("{path}: not a valid .vdif journal: {source}")]
+    SidecarFormat {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
+    #[error("journal format v{found}, this build understands v{expected}")]
+    SidecarVersion { found: u32, expected: u32 },
+
+    #[error(
+        "these changes cannot be rolled back, so no journal was written:\n{}",
+        .0.iter().map(|s| format!("  {s}")).collect::<Vec<_>>().join("\n")
+    )]
+    Untracked(Vec<String>),
+}
