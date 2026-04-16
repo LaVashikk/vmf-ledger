@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use crate::ops::Token;
+use crate::ops::{Collision, Token};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LedgerError {
@@ -35,6 +35,13 @@ pub enum LedgerError {
     },
     #[error("marker {0} is on more than one entity; a compiled entity was probably duplicated")]
     DuplicateMarker(Token),
+
+    #[error(
+        "the map was edited where this tool had written:\n{}\n\
+         re-run with force to roll back anyway, discarding those edits",
+        .0.iter().map(|c| format!("  {c}")).collect::<Vec<_>>().join("\n")
+    )]
+    Collisions(Vec<Collision>),
 
     #[error(
         "these changes cannot be rolled back, so no journal was written:\n{}",

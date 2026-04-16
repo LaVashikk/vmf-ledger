@@ -81,3 +81,22 @@ impl Op {
         }
     }
 }
+
+/// A spot where the map no longer holds what the tool left behind.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Collision {
+    pub token: Token,
+    pub what: String,
+    pub expected: String,
+    pub found: String,
+}
+
+impl std::fmt::Display for Collision {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}: {} is {:?}, expected {:?}",
+            self.token, self.what, self.found, self.expected
+        )
+    }
+}

@@ -57,6 +57,13 @@ impl LedgerOptions {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RestoreOptions {
+    /// Roll back over edits made where the tool had written, losing them.
+    /// Edits anywhere else survive either way.
+    pub force: bool,
+}
+
 /// A map plus the pristine copy it started from.
 ///
 /// Deref goes to the working copy, so a tool mutates it exactly as it would a

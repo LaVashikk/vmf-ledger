@@ -5,17 +5,18 @@
 
 use vmf_forge::prelude::*;
 
-use crate::LedgerOptions;
 use crate::error::LedgerError;
 use crate::marker;
-use crate::ops::{Bucket, Op, Token};
+use crate::ops::{Bucket, Collision, Op, Token};
 use crate::sidecar::Journal;
+use crate::{LedgerOptions, RestoreOptions};
 
 /// Undoes the tool's edits in place.
 pub fn restore(
     map: &mut VmfFile,
     journal: &Journal,
     opts: &LedgerOptions,
+    restore_opts: &RestoreOptions,
 ) -> Result<(), LedgerError> {
     let mark = marker::read(&map.world.key_values, &opts.world_key)
         .ok_or_else(|| LedgerError::NotMarked(journal.tool.clone()))?;
@@ -30,6 +31,13 @@ pub fn restore(
     }
 
     let index = index_markers(map, &journal.marker_key)?;
+
+    // Checked in full before anything is written: a rollback that bailed out
+    // halfway would leave the map in a state no journal describes.
+    let collisions = check(map, journal, &index);
+    if !collisions.is_empty() && !restore_opts.force {
+        return Err(LedgerError::Collisions(collisions));
+    }
 
     apply(map, journal, &index);
     strip_markers(map, &journal.marker_key);
@@ -67,6 +75,72 @@ pub(crate) fn entity_at(map: &mut VmfFile, bucket: Bucket, idx: usize) -> Option
     match bucket {
         Bucket::Entity => map.entities.0.get_mut(idx),
         Bucket::Hidden => map.hiddens.0.get_mut(idx),
+    }
+}
+
+fn find<'a>(map: &'a VmfFile, index: &Index, token: &str) -> Option<&'a Entity> {
+    let (bucket, idx) = *index.get(token)?;
+    match bucket {
+        Bucket::Entity => map.entities.0.get(idx),
+        Bucket::Hidden => map.hiddens.0.get(idx),
+    }
+}
+
+fn collision(token: &str, what: &str, expected: &str, found: &str) -> Collision {
+    Collision {
+        token: token.to_string(),
+        what: what.to_string(),
+        expected: expected.to_string(),
+        found: found.to_string(),
+    }
+}
+
+fn check(map: &VmfFile, journal: &Journal, index: &Index) -> Vec<Collision> {
+    const GONE: &str = "<absent>";
+    let mut out = Vec::new();
+
+    for op in &journal.ops {
+        // A re-inserted entity is not in the map yet, by definition.
+        if matches!(op, Op::RemoveEntity { .. }) {
+            continue;
+        }
+        let Some(ent) = find(map, index, op.token()) else {
+            out.push(collision(op.token(), "entity", "present", GONE));
+            continue;
+        };
+
+        match op {
+            Op::Set { key, new, .. } | Op::Add { key, new, .. } => {
+                let found = ent.key_values.get(key).map(String::as_str).unwrap_or(GONE);
+                if found != new {
+                    out.push(collision(op.token(), key, new, found));
+                }
+            }
+            Op::Remove { key, .. } => {
+                if let Some(found) = ent.key_values.get(key) {
+                    out.push(collision(op.token(), key, GONE, found));
+                }
+            }
+            Op::Connections { new, .. } => {
+                if &ent.connections != new {
+                    out.push(collision(
+                        op.token(),
+                        "connections",
+                        &describe(new),
+                        &describe(&ent.connections),
+                    ));
+                }
+            }
+            Op::AddEntity { .. } | Op::RemoveEntity { .. } => {}
+        }
+    }
+    out
+}
+
+fn describe(connections: &Option<Vec<Connection>>) -> String {
+    match connections {
+        None => "none".to_string(),
+        Some(list) => format!("{} connection(s)", list.len()),
     }
 }
 
