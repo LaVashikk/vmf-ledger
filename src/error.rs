@@ -5,6 +5,8 @@
 
 use std::path::PathBuf;
 
+use crate::ops::Token;
+
 #[derive(Debug, thiserror::Error)]
 pub enum LedgerError {
     #[error("{path}: {source}")]
@@ -19,6 +21,20 @@ pub enum LedgerError {
     },
     #[error("journal format v{found}, this build understands v{expected}")]
     SidecarVersion { found: u32, expected: u32 },
+
+    #[error("the map carries no mark from {0}; nothing to roll back")]
+    NotMarked(String),
+    #[error(
+        "the {tool} journal does not belong to this map: the marker says {in_map}, the \
+         journal is {in_journal}"
+    )]
+    Mismatched {
+        tool: String,
+        in_map: String,
+        in_journal: String,
+    },
+    #[error("marker {0} is on more than one entity; a compiled entity was probably duplicated")]
+    DuplicateMarker(Token),
 
     #[error(
         "these changes cannot be rolled back, so no journal was written:\n{}",

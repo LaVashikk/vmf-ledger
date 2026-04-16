@@ -13,13 +13,14 @@ pub mod error;
 pub mod marker;
 pub mod matching;
 pub mod ops;
+pub mod rollback;
 pub mod sidecar;
 
 use diff::Diff;
-use ops::Bucket;
 use sidecar::Journal;
 
 pub use error::LedgerError;
+pub use rollback::restore;
 
 /// Key written into `world`. Hammer preserves world keyvalues the same way it
 /// preserves `comment`.
@@ -96,11 +97,7 @@ impl TrackedVmf {
 
         let Diff { ops, marks, .. } = diff;
         for mark in &marks {
-            let list = match mark.bucket {
-                Bucket::Entity => &mut self.working.entities.0,
-                Bucket::Hidden => &mut self.working.hiddens.0,
-            };
-            if let Some(ent) = list.get_mut(mark.idx) {
+            if let Some(ent) = rollback::entity_at(&mut self.working, mark.bucket, mark.idx) {
                 ent.key_values
                     .insert(opts.marker_key.clone(), mark.token.clone());
             }
