@@ -25,6 +25,12 @@ pub enum LedgerError {
     #[error("the map carries no mark from {0}; nothing to roll back")]
     NotMarked(String),
     #[error(
+        "the map was compiled by {marker}, but its journal {path} is gone.\n\
+         Without it the compile cannot be undone, and compiling again would build on \
+         top of the previous output"
+    )]
+    JournalMissing { path: PathBuf, marker: String },
+    #[error(
         "the {tool} journal does not belong to this map: the marker says {in_map}, the \
          journal is {in_journal}"
     )]

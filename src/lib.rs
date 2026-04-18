@@ -20,7 +20,7 @@ use diff::Diff;
 use sidecar::Journal;
 
 pub use error::LedgerError;
-pub use rollback::restore;
+pub use rollback::{is_marked, restore, rewind};
 
 /// Key written into `world`. Hammer preserves world keyvalues the same way it
 /// preserves `comment`.

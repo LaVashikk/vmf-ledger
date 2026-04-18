@@ -11,6 +11,11 @@ use crate::ops::{Bucket, Collision, Op, Token};
 use crate::sidecar::Journal;
 use crate::{LedgerOptions, RestoreOptions};
 
+/// True when this tool has compiled the map before.
+pub fn is_marked(map: &VmfFile, opts: &LedgerOptions) -> bool {
+    marker::read(&map.world.key_values, &opts.world_key).is_some()
+}
+
 /// Undoes the tool's edits in place.
 pub fn restore(
     map: &mut VmfFile,
@@ -44,6 +49,35 @@ pub fn restore(
 
     marker::write(&mut map.world.key_values, &opts.world_key, None);
     Ok(())
+}
+
+/// Rolls a map back to the state it had before the tool last touched it.
+///
+/// The common entry point: a compiler calls this on load so it always works
+/// from a map without its own previous output in it, whether or not it has
+/// compiled this one before.
+pub fn rewind(
+    map: &mut VmfFile,
+    map_path: impl AsRef<std::path::Path>,
+    opts: &LedgerOptions,
+    restore_opts: &RestoreOptions,
+) -> Result<bool, LedgerError> {
+    let Some(mark) = marker::read(&map.world.key_values, &opts.world_key) else {
+        return Ok(false);
+    };
+    let mark = mark.to_string();
+
+    // The map says we compiled it, so compiling again without rolling back
+    // first would build on top of the previous output. Worth its own error:
+    // "no such file" tells a mapper nothing about a file they never heard of.
+    let path = Journal::path_for(map_path);
+    if !path.exists() {
+        return Err(LedgerError::JournalMissing { path, marker: mark });
+    }
+
+    let journal = Journal::read(&path)?;
+    restore(map, &journal, opts, restore_opts)?;
+    Ok(true)
 }
 
 type Index = std::collections::HashMap<Token, (Bucket, usize)>;
