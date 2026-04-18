@@ -186,7 +186,7 @@ fn apply(map: &mut VmfFile, journal: &Journal, index: &Index) {
             continue;
         };
         match op {
-            Op::Set { key, old, .. } | Op::Remove { key, old, .. } => {
+            Op::Set { key, old, .. } => {
                 ent.key_values.insert(key.clone(), old.clone());
             }
             Op::Add { key, .. } => {
@@ -195,6 +195,26 @@ fn apply(map: &mut VmfFile, journal: &Journal, index: &Index) {
             Op::Connections { old, .. } => ent.connections = old.clone(),
             _ => {}
         }
+    }
+
+    // `Op::Remove` carries the index the key sat at in the original, and that
+    // index only means anything once the earlier keys are already back. So it
+    // goes last, ascending, rather than landing at the end of the map.
+    let mut restored: Vec<(&Token, usize, &String, &String)> = journal
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::Remove { at, idx, key, old } => Some((at, *idx, key, old)),
+            _ => None,
+        })
+        .collect();
+    restored.sort_unstable_by_key(|&(_, idx, ..)| idx);
+    for (token, idx, key, old) in restored {
+        let Some(ent) = resolve(map, index, token) else {
+            continue;
+        };
+        let at = idx.min(ent.key_values.len());
+        ent.key_values.shift_insert(at, key.clone(), old.clone());
     }
 
     for op in &journal.ops {
