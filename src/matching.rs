@@ -1,18 +1,19 @@
 //! Pairing blocks between two states of a VMF.
 //!
 //! Hammer rewrites a map wholesale on save: block order gets shuffled and `id`
-//! keyvalues are not guaranteed to survive. Positional comparison therefore
-//! reports half the file as changed, which is why a plain `git diff` over VMF
-//! is unreadable.
+//! keyvalues are not guaranteed to survive. Positional or id-only comparison
+//! therefore reports half the file as changed, which is why a plain `git diff`
+//! over VMF is unreadable.
 //!
 //! Matching runs as a cascade, cheapest and most certain first. Each stage only
-//! sees what the previous ones could not place:
+//! sees what the previous ones could not place, so the quadratic stage normally
+//! runs over a handful of blocks:
 //!
-//! 1. **Id** - the `id` keyvalue. Exact, O(1), but Hammer may renumber.
-//! 2. **Signature** - the discriminating keyvalues taken together. Exact, O(1),
+//! 1. **Marker** - a key the tool itself wrote. Exact, O(1).
+//! 2. **Id** - the `id` keyvalue. Exact, O(1), but Hammer may renumber.
+//! 3. **Signature** - the discriminating keyvalues taken together. Exact, O(1),
 //!    and only trusted when the signature is unique on both sides.
-//! 3. **Similarity** - weighted Jaccard over every keyvalue. O(k^2) per bucket,
-//!    but it only ever sees what the exact stages could not place.
+//! 4. **Similarity** - weighted Jaccard over every keyvalue. O(k^2) per bucket.
 
 use std::collections::HashMap;
 
@@ -30,6 +31,7 @@ pub enum Confidence {
     Similarity,
     Signature,
     Id,
+    Marker,
 }
 
 /// One matched pair of blocks, as indices into the slices handed to
@@ -54,13 +56,16 @@ pub struct Matching {
 
 #[derive(Debug, Clone)]
 pub struct MatchOptions<'a> {
+    /// Key holding a token the tool wrote itself. The only stage that survives
+    /// arbitrary editing, so it is tried first. `None` skips the stage.
+    pub marker_key: Option<&'a str>,
     pub signature_keys: &'a [&'a str],
     /// Keys the similarity stage must ignore.
     ///
     /// An identifier is unique per block, so rarity weighting hands it the
-    /// largest weight of all - and once the id stage has failed it is known not
-    /// to match, so that weight lands entirely in the union and drags every
-    /// score towards zero.
+    /// largest weight of all - and once stage 2 has failed it is known not to
+    /// match, so that weight lands entirely in the union and drags every score
+    /// towards zero. The marker key is dropped for the same reason.
     pub ignore_keys: &'a [&'a str],
     /// Two blocks scoring below this are treated as unrelated.
     pub min_score: f32,
@@ -69,6 +74,7 @@ pub struct MatchOptions<'a> {
 impl Default for MatchOptions<'_> {
     fn default() -> Self {
         Self {
+            marker_key: None,
             signature_keys: DEFAULT_SIGNATURE_KEYS,
             ignore_keys: &["id"],
             min_score: 0.5,
@@ -84,11 +90,16 @@ pub fn match_blocks(old: &[VmfBlock], new: &[VmfBlock], opts: &MatchOptions<'_>)
     let mut state = State::new(old, new);
 
     for group in name_groups(old, new) {
+        if let Some(key) = opts.marker_key {
+            state.pair_on(&group, Confidence::Marker, |b| kv(b, key));
+        }
         state.pair_on(&group, Confidence::Id, |b| kv(b, "id"));
         state.pair_on(&group, Confidence::Signature, |b| {
             signature(b, opts.signature_keys)
         });
-        state.pair_by_similarity(&group, opts.min_score, opts.ignore_keys);
+        let mut ignored: Vec<&str> = opts.ignore_keys.to_vec();
+        ignored.extend(opts.marker_key);
+        state.pair_by_similarity(&group, opts.min_score, &ignored);
     }
 
     state.finish()
