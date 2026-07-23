@@ -37,6 +37,10 @@ pub struct Journal {
     /// The per-entity marker key, so a rollback needs nothing but this section.
     pub marker_key: String,
     pub ops: Vec<Op>,
+
+    /// Set only when this section was lifted out of a v1 file. See [`V1::lift`].
+    #[serde(skip)]
+    legacy_fingerprint: Option<String>,
 }
 
 impl Journal {
@@ -51,6 +55,7 @@ impl Journal {
             version: version.into(),
             marker_key: marker_key.into(),
             ops,
+            legacy_fingerprint: None,
         }
     }
 
@@ -65,7 +70,10 @@ impl Journal {
     /// compiling the same map appends its own section, and that must not
     /// invalidate a rollback that has nothing to do with it.
     pub fn fingerprint(&self) -> String {
-        format!("{:016x}", fnv1a(&to_json(self)))
+        match &self.legacy_fingerprint {
+            Some(carried) => carried.clone(),
+            None => format!("{:016x}", fnv1a(&to_json(self))),
+        }
     }
 
     /// This tool's section of the journal beside the map, if it has one.
@@ -136,18 +144,30 @@ impl Sidecar {
             path: path.to_path_buf(),
             source,
         })?;
-        let sidecar: Self =
-            serde_json::from_str(&text).map_err(|source| LedgerError::SidecarFormat {
-                path: path.to_path_buf(),
-                source,
-            })?;
-        if sidecar.version != FORMAT_VERSION {
-            return Err(LedgerError::SidecarVersion {
-                found: sidecar.version,
-                expected: FORMAT_VERSION,
-            });
+        let format = |source| LedgerError::SidecarFormat {
+            path: path.to_path_buf(),
+            source,
+        };
+
+        // The version has to be read before the rest, because it decides what
+        // the rest even looks like.
+        #[derive(Deserialize)]
+        struct Probe {
+            version: u32,
         }
-        Ok(sidecar)
+        let probe: Probe = serde_json::from_str(&text).map_err(format)?;
+
+        match probe.version {
+            1 => Ok(Self {
+                version: FORMAT_VERSION,
+                tools: vec![serde_json::from_str::<V1>(&text).map_err(format)?.lift()],
+            }),
+            FORMAT_VERSION => serde_json::from_str(&text).map_err(format),
+            found => Err(LedgerError::SidecarVersion {
+                found,
+                expected: FORMAT_VERSION,
+            }),
+        }
     }
 
     pub fn write(&self, path: impl AsRef<Path>) -> Result<(), LedgerError> {
@@ -160,6 +180,43 @@ impl Sidecar {
 
     pub fn to_json(&self) -> String {
         to_json(self)
+    }
+}
+
+/// The single-tool format, read only.
+///
+/// Maps compiled before the registry existed still carry a v1 journal beside
+/// them, and refusing to read it would strand every one of them.
+#[derive(Serialize, Deserialize)]
+struct V1 {
+    version: u32,
+    tool: String,
+    marker_key: String,
+    ops: Vec<Op>,
+}
+
+impl V1 {
+    fn lift(self) -> Journal {
+        // The fingerprint sitting in that map was taken over this exact text.
+        // Reproduce it rather than recompute it: a v2 section serialises
+        // differently, and every already-compiled map would stop matching its
+        // own journal.
+        let carried = format!("{:016x}", fnv1a(&to_json(&self)));
+
+        // v1 glued name and version into one string, and the world marker was
+        // split on the last space, so that is where they part here too.
+        let (name, version) = match self.tool.rsplit_once(' ') {
+            Some((name, version)) => (name.to_string(), version.to_string()),
+            None => (self.tool.clone(), String::new()),
+        };
+
+        Journal {
+            name,
+            version,
+            marker_key: self.marker_key,
+            ops: self.ops,
+            legacy_fingerprint: Some(carried),
+        }
     }
 }
 
