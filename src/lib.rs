@@ -32,8 +32,11 @@ pub const DEFAULT_MARKER_KEY: &str = "_vlid";
 
 #[derive(Debug, Clone)]
 pub struct LedgerOptions {
-    /// Tool and build in one string. Goes into the map's mark and the journal.
-    pub tool: String,
+    /// The tool's identity, and deliberately not its version: a version bump
+    /// would otherwise orphan every map the previous build compiled.
+    pub name: String,
+    /// Which build. Recorded in the map and the journal for a human to read.
+    pub version: String,
     /// Key of the mark in `world`.
     pub world_key: String,
     /// Key marking the entities this tool touched.
@@ -41,9 +44,10 @@ pub struct LedgerOptions {
 }
 
 impl LedgerOptions {
-    pub fn new(tool: impl Into<String>) -> Self {
+    pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self {
         Self {
-            tool: tool.into(),
+            name: name.into(),
+            version: version.into(),
             world_key: DEFAULT_WORLD_KEY.to_string(),
             marker_key: DEFAULT_MARKER_KEY.to_string(),
         }
@@ -110,13 +114,17 @@ impl TrackedVmf {
             }
         }
 
-        let journal = Journal::new(&opts.tool, &opts.marker_key, ops);
+        // The journal still glues the two together in one field; only the map's
+        // mark keeps them apart so far.
+        let tool = format!("{} {}", opts.name, opts.version);
+        let journal = Journal::new(tool, &opts.marker_key, ops);
         if !journal.is_empty() {
             marker::write(
                 &mut self.working.world.key_values,
                 &opts.world_key,
-                Some(&marker::Mark {
-                    tool: opts.tool.clone(),
+                Some(&marker::Record {
+                    name: opts.name.clone(),
+                    version: opts.version.clone(),
                     fingerprint: journal.fingerprint(),
                 }),
             );

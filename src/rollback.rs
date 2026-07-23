@@ -13,7 +13,8 @@ use crate::{LedgerOptions, RestoreOptions};
 
 /// True when this tool has compiled the map before.
 pub fn is_marked(map: &VmfFile, opts: &LedgerOptions) -> bool {
-    marker::read(&map.world.key_values, &opts.world_key).is_some()
+    marker::read(&map.world.key_values, &opts.world_key)
+        .is_some_and(|mark| mark.name == opts.name)
 }
 
 /// Undoes the tool's edits in place.
@@ -24,12 +25,13 @@ pub fn restore(
     restore_opts: &RestoreOptions,
 ) -> Result<(), LedgerError> {
     let mark = marker::read(&map.world.key_values, &opts.world_key)
-        .ok_or_else(|| LedgerError::NotMarked(journal.tool.clone()))?;
+        .filter(|mark| mark.name == opts.name)
+        .ok_or_else(|| LedgerError::NotMarked(opts.name.clone()))?;
 
     let in_journal = journal.fingerprint();
     if mark.fingerprint != in_journal {
         return Err(LedgerError::Mismatched {
-            tool: journal.tool.clone(),
+            tool: opts.name.clone(),
             in_map: mark.fingerprint,
             in_journal,
         });
@@ -62,7 +64,9 @@ pub fn rewind(
     opts: &LedgerOptions,
     restore_opts: &RestoreOptions,
 ) -> Result<bool, LedgerError> {
-    let Some(mark) = marker::read(&map.world.key_values, &opts.world_key) else {
+    let Some(mark) = marker::read(&map.world.key_values, &opts.world_key)
+        .filter(|mark| mark.name == opts.name)
+    else {
         return Ok(false);
     };
     let mark = mark.to_string();
