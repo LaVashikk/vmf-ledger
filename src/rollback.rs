@@ -13,8 +13,8 @@ use crate::{LedgerOptions, RestoreOptions};
 
 /// True when this tool has compiled the map before.
 pub fn is_marked(map: &VmfFile, opts: &LedgerOptions) -> bool {
-    marker::read(&map.world.key_values, &opts.world_key)
-        .is_some_and(|mark| mark.name == opts.name)
+    let marks = marker::read(&map.world.key_values, &opts.world_key);
+    marker::find(&marks, &opts.name).is_some()
 }
 
 /// Undoes the tool's edits in place.
@@ -24,15 +24,17 @@ pub fn restore(
     opts: &LedgerOptions,
     restore_opts: &RestoreOptions,
 ) -> Result<(), LedgerError> {
-    let mark = marker::read(&map.world.key_values, &opts.world_key)
-        .filter(|mark| mark.name == opts.name)
-        .ok_or_else(|| LedgerError::NotMarked(opts.name.clone()))?;
+    let mut marks = marker::read(&map.world.key_values, &opts.world_key);
+    let in_map = marker::find(&marks, &opts.name)
+        .ok_or_else(|| LedgerError::NotMarked(opts.name.clone()))?
+        .fingerprint
+        .clone();
 
     let in_journal = journal.fingerprint();
-    if mark.fingerprint != in_journal {
+    if in_map != in_journal {
         return Err(LedgerError::Mismatched {
             tool: opts.name.clone(),
-            in_map: mark.fingerprint,
+            in_map,
             in_journal,
         });
     }
@@ -49,7 +51,8 @@ pub fn restore(
     apply(map, journal, &index);
     strip_markers(map, &journal.marker_key);
 
-    marker::write(&mut map.world.key_values, &opts.world_key, None);
+    marker::remove(&mut marks, &opts.name);
+    marker::write(&mut map.world.key_values, &opts.world_key, &marks);
     Ok(())
 }
 
@@ -64,9 +67,8 @@ pub fn rewind(
     opts: &LedgerOptions,
     restore_opts: &RestoreOptions,
 ) -> Result<bool, LedgerError> {
-    let Some(mark) = marker::read(&map.world.key_values, &opts.world_key)
-        .filter(|mark| mark.name == opts.name)
-    else {
+    let marks = marker::read(&map.world.key_values, &opts.world_key);
+    let Some(mark) = marker::find(&marks, &opts.name) else {
         return Ok(false);
     };
     let mark = mark.to_string();

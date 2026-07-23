@@ -1,26 +1,31 @@
-//! The tool's mark, stamped into `world`.
+//! The registry of tools stamped into `world`.
 //!
-//! Hammer preserves world keyvalues the same way it preserves `comment`, so one
-//! line there survives the map being opened, edited and saved again:
+//! Several tools can compile the same map, so the mark is a list and not a
+//! single record: each tool owns one entry, reads the others without touching
+//! them, and drops only its own on rollback.
+//!
+//! One `world` keyvalue holds the lot:
 //!
 //! ```text
-//! "vmf_ledger" "pseudo-ents 0.1.0 a1b2c3d4e5f60718"
+//! "vmf_ledger" "pseudo-ents 0.1.0 a1b2c3d4e5f60718; cube-init 1.0 0011223344556677"
 //! ```
 //!
-//! Who compiled the map, which build, and which journal undoes it. `world` is a
-//! list a mapper actually opens in Hammer, so one line of tooling noise there is
-//! the whole budget.
+//! A key per tool would work as well, but `world` is a list a mapper actually
+//! opens in Hammer, and one line of tooling noise there is enough. The order of
+//! the records is the order the tools stamped the map in.
 
 use indexmap::IndexMap;
 
-/// The tool's record in `world`.
+const RECORD_SEP: char = ';';
+
+/// One tool's record in `world`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     pub name: String,
     /// Informational only: what wrote this. Never part of the tool's identity,
     /// or a version bump would orphan every map compiled by the previous one.
     pub version: String,
-    /// Ties the record to one exact journal.
+    /// Ties the record to one exact journal section.
     pub fingerprint: String,
 }
 
@@ -34,22 +39,45 @@ impl std::fmt::Display for Record {
     }
 }
 
-pub fn read(world: &IndexMap<String, String>, key: &str) -> Option<Record> {
-    parse_record(world.get(key)?)
+/// Reads the registry. An unparsable record is dropped rather than fought over:
+/// what matters is finding our own, and a record we cannot read is not ours.
+pub fn read(world: &IndexMap<String, String>, key: &str) -> Vec<Record> {
+    let Some(value) = world.get(key) else {
+        return Vec::new();
+    };
+    value.split(RECORD_SEP).filter_map(parse_record).collect()
 }
 
-/// Writes the record back, dropping the key entirely once there is none.
-pub fn write(world: &mut IndexMap<String, String>, key: &str, mark: Option<&Record>) {
-    match mark {
-        // `insert` keeps an existing key where it is, so re-stamping does not
-        // move the line around in `world` and show up as an edit.
-        Some(mark) => {
-            world.insert(key.to_string(), mark.to_string());
-        }
-        None => {
-            world.shift_remove(key);
-        }
+/// Writes the registry back, dropping the key entirely once nobody is left.
+pub fn write(world: &mut IndexMap<String, String>, key: &str, marks: &[Record]) {
+    if marks.is_empty() {
+        world.shift_remove(key);
+        return;
     }
+    let text = marks
+        .iter()
+        .map(Record::to_string)
+        .collect::<Vec<_>>()
+        .join("; ");
+    // `insert` keeps an existing key where it is, so re-stamping does not move
+    // the line around in `world` and show up as an edit.
+    world.insert(key.to_string(), text);
+}
+
+pub fn find<'a>(marks: &'a [Record], name: &str) -> Option<&'a Record> {
+    marks.iter().find(|mark| mark.name == name)
+}
+
+/// Adds the record, or replaces the one this tool left last time.
+pub fn upsert(marks: &mut Vec<Record>, mark: Record) {
+    match marks.iter_mut().find(|it| it.name == mark.name) {
+        Some(slot) => *slot = mark,
+        None => marks.push(mark),
+    }
+}
+
+pub fn remove(marks: &mut Vec<Record>, name: &str) {
+    marks.retain(|mark| mark.name != name);
 }
 
 /// A record is `name version fingerprint`, and the fingerprint is always last.

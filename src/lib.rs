@@ -17,6 +17,7 @@ pub mod rollback;
 pub mod sidecar;
 
 use diff::Diff;
+use marker::Record;
 use sidecar::Journal;
 
 pub use error::LedgerError;
@@ -119,14 +120,19 @@ impl TrackedVmf {
         let tool = format!("{} {}", opts.name, opts.version);
         let journal = Journal::new(tool, &opts.marker_key, ops);
         if !journal.is_empty() {
-            marker::write(
-                &mut self.working.world.key_values,
-                &opts.world_key,
-                Some(&marker::Record {
+            let mut registry = marker::read(&self.working.world.key_values, &opts.world_key);
+            marker::upsert(
+                &mut registry,
+                Record {
                     name: opts.name.clone(),
                     version: opts.version.clone(),
                     fingerprint: journal.fingerprint(),
-                }),
+                },
+            );
+            marker::write(
+                &mut self.working.world.key_values,
+                &opts.world_key,
+                &registry,
             );
         }
         Ok((self.working, journal))
