@@ -8,7 +8,7 @@ use vmf_forge::prelude::*;
 use crate::error::LedgerError;
 use crate::marker;
 use crate::ops::{Bucket, Collision, Op, Token};
-use crate::sidecar::Journal;
+use crate::sidecar::{Journal, Sidecar};
 use crate::{LedgerOptions, RestoreOptions};
 
 /// True when this tool has compiled the map before.
@@ -25,15 +25,15 @@ pub fn restore(
     restore_opts: &RestoreOptions,
 ) -> Result<(), LedgerError> {
     let mut marks = marker::read(&map.world.key_values, &opts.world_key);
-    let in_map = marker::find(&marks, &opts.name)
-        .ok_or_else(|| LedgerError::NotMarked(opts.name.clone()))?
+    let in_map = marker::find(&marks, &journal.name)
+        .ok_or_else(|| LedgerError::NotMarked(journal.name.clone()))?
         .fingerprint
         .clone();
 
     let in_journal = journal.fingerprint();
     if in_map != in_journal {
         return Err(LedgerError::Mismatched {
-            tool: opts.name.clone(),
+            tool: journal.name.clone(),
             in_map,
             in_journal,
         });
@@ -51,7 +51,7 @@ pub fn restore(
     apply(map, journal, &index);
     strip_markers(map, &journal.marker_key);
 
-    marker::remove(&mut marks, &opts.name);
+    marker::remove(&mut marks, &journal.name);
     marker::write(&mut map.world.key_values, &opts.world_key, &marks);
     Ok(())
 }
@@ -76,12 +76,14 @@ pub fn rewind(
     // The map says we compiled it, so compiling again without rolling back
     // first would build on top of the previous output. Worth its own error:
     // "no such file" tells a mapper nothing about a file they never heard of.
-    let path = Journal::path_for(map_path);
+    let path = Sidecar::path_for(map_path);
     if !path.exists() {
         return Err(LedgerError::JournalMissing { path, marker: mark });
     }
 
-    let journal = Journal::read(&path)?;
+    let Some(journal) = Journal::read(&path, &opts.name)? else {
+        return Err(LedgerError::JournalMissing { path, marker: mark });
+    };
     restore(map, &journal, opts, restore_opts)?;
     Ok(true)
 }

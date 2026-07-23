@@ -115,10 +115,7 @@ impl TrackedVmf {
             }
         }
 
-        // The journal still glues the two together in one field; only the map's
-        // mark keeps them apart so far.
-        let tool = format!("{} {}", opts.name, opts.version);
-        let journal = Journal::new(tool, &opts.marker_key, ops);
+        let journal = Journal::new(&opts.name, &opts.version, &opts.marker_key, ops);
         if !journal.is_empty() {
             let mut registry = marker::read(&self.working.world.key_values, &opts.world_key);
             marker::upsert(
