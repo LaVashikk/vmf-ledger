@@ -33,7 +33,7 @@ pub fn restore(
     let in_journal = journal.fingerprint();
     if in_map != in_journal {
         return Err(LedgerError::Mismatched {
-            tool: journal.name.clone(),
+            name: journal.name.clone(),
             in_map,
             in_journal,
         });
@@ -82,7 +82,10 @@ pub fn rewind(
     }
 
     let Some(journal) = Journal::read(&path, &opts.name)? else {
-        return Err(LedgerError::JournalMissing { path, marker: mark });
+        return Err(LedgerError::SectionMissing {
+            path,
+            name: opts.name.clone(),
+        });
     };
     restore(map, &journal, opts, restore_opts)?;
     Ok(true)

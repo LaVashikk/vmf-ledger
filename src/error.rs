@@ -37,12 +37,14 @@ pub enum LedgerError {
          top of the previous output"
     )]
     JournalMissing { path: PathBuf, marker: String },
+    #[error("the map says {name} compiled it, but {path} holds no section for {name}")]
+    SectionMissing { path: PathBuf, name: String },
     #[error(
-        "the {tool} journal does not belong to this map: the marker says {in_map}, the \
+        "the {name} journal does not belong to this map: the marker says {in_map}, the \
          journal is {in_journal}"
     )]
     Mismatched {
-        tool: String,
+        name: String,
         in_map: String,
         in_journal: String,
     },
