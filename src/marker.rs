@@ -39,6 +39,28 @@ impl std::fmt::Display for Record {
     }
 }
 
+/// A name that survives a trip through the registry and a keyvalue name.
+///
+/// Whitespace separates the fields of a record and `;` separates the records,
+/// so a tool called `My Tool` would silently corrupt both. Folding them into
+/// `_` costs nothing and keeps the failure impossible rather than rare.
+pub fn slug(name: &str) -> String {
+    let mut out: String = name
+        .chars()
+        .map(|c| {
+            if c.is_whitespace() || c == RECORD_SEP || c == '"' {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    if out.is_empty() {
+        out.push_str("unnamed");
+    }
+    out
+}
+
 /// Reads the registry. An unparsable record is dropped rather than fought over:
 /// what matters is finding our own, and a record we cannot read is not ours.
 pub fn read(world: &IndexMap<String, String>, key: &str) -> Vec<Record> {
@@ -82,8 +104,8 @@ pub fn remove(marks: &mut Vec<Record>, name: &str) {
 
 /// A record is `name version fingerprint`, and the fingerprint is always last.
 ///
-/// Read from the right, so a name with spaces in it - written by an earlier
-/// build, or by hand - still resolves to the right fingerprint.
+/// Read from the right, so a name with spaces in it - written by a build before
+/// [`slug`] existed, or by hand - still resolves to the right fingerprint.
 fn parse_record(text: &str) -> Option<Record> {
     let fields: Vec<&str> = text.split_whitespace().collect();
     match fields.len() {

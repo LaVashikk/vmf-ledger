@@ -23,41 +23,52 @@ use sidecar::Journal;
 pub use error::LedgerError;
 pub use rollback::{is_marked, restore, rewind};
 
-/// Key written into `world`. Hammer preserves world keyvalues the same way it
-/// preserves `comment`.
+/// Default key written into `world`. Hammer preserves world keyvalues the same
+/// way it preserves `comment`.
 pub const DEFAULT_WORLD_KEY: &str = "vmf_ledger";
 
-/// Key marking the entities the tool touched. Short, and prefixed so it reads
-/// as tooling when a mapper stumbles over it in Hammer.
-pub const DEFAULT_MARKER_KEY: &str = "_vlid";
+/// What a derived marker key starts with. Short, and prefixed so it reads as
+/// tooling when a mapper stumbles over it in Hammer.
+pub const MARKER_PREFIX: &str = "_vl_";
 
 #[derive(Debug, Clone)]
 pub struct LedgerOptions {
-    /// The tool's identity, and deliberately not its version: a version bump
-    /// would otherwise orphan every map the previous build compiled.
+    /// The tool's identity. Everything else is derived from it, so two tools
+    /// with different names never write over each other.
     pub name: String,
-    /// Which build. Recorded in the map and the journal for a human to read.
+    /// Which build. Recorded in the map and the journal for a human to read,
+    /// and deliberately kept out of the identity.
     pub version: String,
-    /// Key of the mark in `world`.
+    /// Key of the tool registry in `world`. Shared with every other tool, and
+    /// the one thing that has no business being per-tool.
     pub world_key: String,
     /// Key marking the entities this tool touched.
     pub marker_key: String,
 }
 
 impl LedgerOptions {
-    pub fn new(name: impl Into<String>, version: impl Into<String>) -> Self {
+    pub fn new(name: impl AsRef<str>, version: impl Into<String>) -> Self {
+        let name = marker::slug(name.as_ref());
         Self {
-            name: name.into(),
-            version: version.into(),
+            marker_key: format!("{MARKER_PREFIX}{name}"),
             world_key: DEFAULT_WORLD_KEY.to_string(),
-            marker_key: DEFAULT_MARKER_KEY.to_string(),
+            name,
+            version: version.into(),
         }
     }
 
-    /// Overrides the marker key. Two tools sharing a map would otherwise write
-    /// their tokens into the same keyvalue and read each other's back.
+    /// Overrides the key derived from the name. For a tool that has already
+    /// shipped under a different one and does not want to strand its maps.
     pub fn with_marker_key(mut self, key: impl Into<String>) -> Self {
         self.marker_key = key.into();
+        self
+    }
+
+    /// Leaves the shared registry for one of its own. A tool that does this
+    /// becomes invisible to every other tool's bookkeeping, which is only what
+    /// you want if it is not sharing the map in the first place.
+    pub fn with_world_key(mut self, key: impl Into<String>) -> Self {
+        self.world_key = key.into();
         self
     }
 }
