@@ -90,7 +90,15 @@ impl Journal {
             Err(LedgerError::SidecarIo { source, .. }) if source.kind() == ErrorKind::NotFound => {
                 Sidecar::default()
             }
-            Err(other) => return Err(other),
+            // Anything else and we stop: the file may hold another tool's only
+            // way back, and overwriting it blind is exactly what this format
+            // exists to prevent.
+            Err(source) => {
+                return Err(LedgerError::SidecarClobber {
+                    path: path.to_path_buf(),
+                    reason: source.to_string(),
+                });
+            }
         };
         sidecar.upsert(self.clone());
         sidecar.write(path)

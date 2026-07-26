@@ -21,6 +21,13 @@ pub enum LedgerError {
     },
     #[error("journal format v{found}, this build understands v{expected}")]
     SidecarVersion { found: u32, expected: u32 },
+    #[error(
+        "refusing to write {path}: it exists but does not read back as a journal.\n\
+         Another tool may have its rollback data in there, and overwriting it would \
+         destroy it.\n\
+         Reason: {reason}"
+    )]
+    SidecarClobber { path: PathBuf, reason: String },
 
     #[error("the map carries no mark from {0}; nothing to roll back")]
     NotMarked(String),
