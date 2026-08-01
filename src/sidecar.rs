@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::LedgerError;
-use crate::ops::Op;
+use crate::ops::{Op, VisgroupOp};
 
 pub const EXTENSION: &str = "vdif";
 const FORMAT_VERSION: u32 = 2;
@@ -37,6 +37,8 @@ pub struct Journal {
     /// The per-entity marker key, so a rollback needs nothing but this section.
     pub marker_key: String,
     pub ops: Vec<Op>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub visgroups: Vec<VisgroupOp>,
 
     /// Set only when this section was lifted out of a v1 file. See [`V1::lift`].
     #[serde(skip)]
@@ -49,19 +51,21 @@ impl Journal {
         version: impl Into<String>,
         marker_key: impl Into<String>,
         ops: Vec<Op>,
+        visgroups: Vec<VisgroupOp>,
     ) -> Self {
         Self {
             name: name.into(),
             version: version.into(),
             marker_key: marker_key.into(),
             ops,
+            visgroups,
             legacy_fingerprint: None,
         }
     }
 
     /// Nothing to undo, so nothing worth writing or marking.
     pub fn is_empty(&self) -> bool {
-        self.ops.is_empty()
+        self.ops.is_empty() && self.visgroups.is_empty()
     }
 
     /// Ties the tool's record in the map to this exact section.
@@ -223,6 +227,7 @@ impl V1 {
             version,
             marker_key: self.marker_key,
             ops: self.ops,
+            visgroups: Vec::new(),
             legacy_fingerprint: Some(carried),
         }
     }

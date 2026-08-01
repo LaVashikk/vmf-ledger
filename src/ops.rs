@@ -68,6 +68,20 @@ pub enum Op {
     },
 }
 
+/// A change to the file itself rather than to one entity.
+///
+/// Kept out of [`Op`] on purpose: every `Op` is addressed by the token of the
+/// entity it belongs to, and a visgroup belongs to no entity. Squeezing it in
+/// would mean a variant with a token that addresses nothing and a special case
+/// in every match that resolves one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case")]
+pub enum VisgroupOp {
+    /// The tool created a visgroup; rolling back deletes it, along with the
+    /// membership of anything still sitting in it.
+    Add { id: i32, name: String },
+}
+
 impl Op {
     /// The entity this op addresses.
     pub fn token(&self) -> &str {

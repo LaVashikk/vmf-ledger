@@ -126,7 +126,13 @@ impl TrackedVmf {
             }
         }
 
-        let journal = Journal::new(&opts.name, &opts.version, &opts.marker_key, ops);
+        let journal = Journal::new(
+            &opts.name,
+            &opts.version,
+            &opts.marker_key,
+            ops,
+            Vec::new(),
+        );
         if !journal.is_empty() {
             let mut registry = marker::read(&self.working.world.key_values, &opts.world_key);
             marker::upsert(
