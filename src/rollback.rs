@@ -7,7 +7,7 @@ use vmf_forge::prelude::*;
 
 use crate::error::LedgerError;
 use crate::marker;
-use crate::ops::{Bucket, Collision, Op, Token};
+use crate::ops::{Bucket, Collision, Op, Token, VisgroupOp};
 use crate::sidecar::{Journal, Sidecar};
 use crate::{LedgerOptions, RestoreOptions};
 
@@ -49,6 +49,7 @@ pub fn restore(
     }
 
     apply(map, journal, &index);
+    undo_visgroups(map, journal);
     strip_markers(map, &journal.marker_key);
 
     marker::remove(&mut marks, &journal.name);
@@ -252,6 +253,34 @@ fn apply(map: &mut VmfFile, journal: &Journal, index: &Index) {
             list.insert(at, entity.clone());
         }
     }
+}
+
+/// Takes back the visgroups the tool made.
+///
+/// Runs after [`apply`], so the entities the tool created - and their
+/// membership with them - are already gone by the time occupancy is counted.
+fn undo_visgroups(map: &mut VmfFile, journal: &Journal) {
+    for op in &journal.visgroups {
+        match op {
+            VisgroupOp::Add { id, .. } => {
+                // Somebody moved their own work in here. The group was ours to
+                // create, not to take away with someone else still in it, and
+                // deleting it would strand them in `_orphaned hidden`.
+                if !occupied(map, *id) {
+                    map.visgroups.remove_by_id(*id);
+                }
+            }
+        }
+    }
+}
+
+fn occupied(map: &VmfFile, id: i32) -> bool {
+    let entities = map.entities.0.iter().chain(map.hiddens.0.iter());
+    let solids = map.world.solids.iter().chain(map.world.hidden.iter());
+    entities
+        .map(|ent| &ent.editor)
+        .chain(solids.map(|s| &s.editor))
+        .any(|editor| editor.visgroup_ids.contains(&id))
 }
 
 fn list_mut(map: &mut VmfFile, bucket: Bucket) -> &mut Vec<Entity> {
