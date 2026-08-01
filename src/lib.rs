@@ -16,8 +16,9 @@ pub mod ops;
 pub mod rollback;
 pub mod sidecar;
 
-use diff::Diff;
+use diff::{Diff, Mark};
 use marker::Record;
+use ops::{Op, VisgroupOp};
 use sidecar::Journal;
 
 pub use error::LedgerError;
@@ -44,6 +45,8 @@ pub struct LedgerOptions {
     pub world_key: String,
     /// Key marking the entities this tool touched.
     pub marker_key: String,
+    /// Visgroup for entities the tool creates, if it wants one.
+    pub visgroup: Option<String>,
 }
 
 impl LedgerOptions {
@@ -52,6 +55,7 @@ impl LedgerOptions {
         Self {
             marker_key: format!("{MARKER_PREFIX}{name}"),
             world_key: DEFAULT_WORLD_KEY.to_string(),
+            visgroup: None,
             name,
             version: version.into(),
         }
@@ -69,6 +73,14 @@ impl LedgerOptions {
     /// you want if it is not sharing the map in the first place.
     pub fn with_world_key(mut self, key: impl Into<String>) -> Self {
         self.world_key = key.into();
+        self
+    }
+
+    /// Collects the entities this tool creates into a visgroup, so a mapper can
+    /// switch everything generated off in Hammer with one click. Created on
+    /// first use and taken away again on rollback.
+    pub fn with_visgroup(mut self, name: impl Into<String>) -> Self {
+        self.visgroup = Some(name.into());
         self
     }
 }
@@ -126,13 +138,12 @@ impl TrackedVmf {
             }
         }
 
-        let journal = Journal::new(
-            &opts.name,
-            &opts.version,
-            &opts.marker_key,
-            ops,
-            Vec::new(),
-        );
+        // After the diff on purpose: the only entities this touches are ones
+        // the tool created, and a rollback deletes those outright, membership
+        // and all. Just the group itself needs an inverse op.
+        let visgroups = self.stamp_visgroup(opts, &ops, &marks);
+
+        let journal = Journal::new(&opts.name, &opts.version, &opts.marker_key, ops, visgroups);
         if !journal.is_empty() {
             let mut registry = marker::read(&self.working.world.key_values, &opts.world_key);
             marker::upsert(
@@ -150,6 +161,59 @@ impl TrackedVmf {
             );
         }
         Ok((self.working, journal))
+    }
+
+    /// Puts the entities the tool created into its visgroup, making it if it is
+    /// not there yet.
+    ///
+    /// Created ones only. A tool that rewrites an entity in place is rewriting
+    /// an object the mapper put there, and switching the group off in Hammer
+    /// would then hide their work rather than the tool's.
+    fn stamp_visgroup(
+        &mut self,
+        opts: &LedgerOptions,
+        ops: &[Op],
+        marks: &[Mark],
+    ) -> Vec<VisgroupOp> {
+        let Some(name) = &opts.visgroup else {
+            return Vec::new();
+        };
+        let added: std::collections::HashSet<&str> = ops
+            .iter()
+            .filter_map(|op| match op {
+                Op::AddEntity { at, .. } => Some(at.as_str()),
+                _ => None,
+            })
+            .collect();
+        if added.is_empty() {
+            return Vec::new();
+        }
+
+        let existing = self
+            .working
+            .visgroups
+            .find_by_name(name)
+            .map(|group| group.id);
+        let (id, created) = match existing {
+            Some(id) => (id, false),
+            None => (self.working.visgroups.create(name.clone()), true),
+        };
+
+        for mark in marks.iter().filter(|m| added.contains(m.token.as_str())) {
+            if let Some(ent) = rollback::entity_at(&mut self.working, mark.bucket, mark.idx) {
+                ent.editor.join_visgroup(id);
+            }
+        }
+
+        // Ours to take away only if we made it: a group the mapper already had
+        // under that name stays after a rollback.
+        match created {
+            true => vec![VisgroupOp::Add {
+                id,
+                name: name.clone(),
+            }],
+            false => Vec::new(),
+        }
     }
 }
 
