@@ -12,7 +12,7 @@ use vmf_forge::VmfBlock;
 use vmf_forge::prelude::*;
 
 use crate::matching::{MatchOptions, match_blocks};
-use crate::ops::{Bucket, Op, Token};
+use crate::ops::{Bucket, Op, Token, as_written};
 
 /// Where a marker keyvalue has to be written for a rollback to find the entity
 /// again.
@@ -84,11 +84,15 @@ fn diff_bucket(
         let mut ops = Vec::new();
 
         diff_key_values(&before.key_values, &after.key_values, &mut ops);
-        if before.connections != after.connections {
+        let (old, new) = (
+            as_written(before.connections.as_ref()),
+            as_written(after.connections.as_ref()),
+        );
+        if old != new {
             ops.push(Op::Connections {
                 at: String::new(),
-                old: before.connections.clone(),
-                new: after.connections.clone(),
+                old,
+                new,
             });
         }
         note_untracked_entity(before, after, &mut out.untracked);

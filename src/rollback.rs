@@ -7,7 +7,7 @@ use vmf_forge::prelude::*;
 
 use crate::error::LedgerError;
 use crate::marker;
-use crate::ops::{Bucket, Collision, Op, Token, VisgroupOp};
+use crate::ops::{self, Bucket, Collision, Op, Token, VisgroupOp};
 use crate::sidecar::{Journal, Sidecar};
 use crate::{LedgerOptions, RestoreOptions};
 
@@ -168,12 +168,15 @@ fn check(map: &VmfFile, journal: &Journal, index: &Index) -> Vec<Collision> {
                 }
             }
             Op::Connections { new, .. } => {
-                if &ent.connections != new {
+                // Compared as the file holds them, so the guard behaves the
+                // same whether the map came off disk or straight from a pass.
+                let found = ops::as_written(ent.connections.as_ref());
+                if &found != new {
                     out.push(collision(
                         op.token(),
                         "connections",
                         &describe(new),
-                        &describe(&ent.connections),
+                        &describe(&found),
                     ));
                 }
             }

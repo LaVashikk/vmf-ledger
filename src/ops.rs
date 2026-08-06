@@ -82,6 +82,17 @@ pub enum VisgroupOp {
     Add { id: i32, name: String },
 }
 
+/// Connections in the form the file will actually hold them.
+///
+/// A `connections` block is a KeyValues map, so writing it groups everything
+/// sharing an output name: a list left interleaved comes back grouped. Both the
+/// recorded value and the guard have to speak that form, or a rollback fires on
+/// a difference the file cannot even represent.
+pub fn as_written(connections: Option<&Vec<Connection>>) -> Option<Vec<Connection>> {
+    let list = connections.map(Vec::as_slice).unwrap_or_default();
+    Connection::from_key_values(&Connection::to_key_values(list))
+}
+
 impl Op {
     /// The entity this op addresses.
     pub fn token(&self) -> &str {
