@@ -11,7 +11,7 @@ use indexmap::IndexMap;
 use vmf_forge::VmfBlock;
 use vmf_forge::prelude::*;
 
-use crate::matching::{MatchOptions, match_blocks};
+use crate::matching::{Confidence, MatchOptions, match_blocks};
 use crate::ops::{Bucket, Op, Token, as_written};
 
 /// Where a marker keyvalue has to be written for a rollback to find the entity
@@ -98,6 +98,21 @@ fn diff_bucket(
         note_untracked_entity(before, after, &mut out.untracked);
 
         if ops.is_empty() {
+            continue;
+        }
+
+        // A pair the matcher guessed at is not good enough to build a rollback
+        // on: the ops would be applied to whichever entity carries the marker,
+        // and if the guess was wrong that writes one entity's old values into
+        // another. Only pairs the matcher is certain about count - a guess that
+        // changed nothing is still fine, which is why this comes after the
+        // emptiness check.
+        if pair.confidence < Confidence::Signature {
+            out.untracked.push(format!(
+                "entity {}: matched only by similarity ({:.2}), too weak to roll back",
+                before.id(),
+                pair.score
+            ));
             continue;
         }
 

@@ -25,7 +25,7 @@ pub const DEFAULT_SIGNATURE_KEYS: &[&str] = &["classname", "targetname", "origin
 /// Which stage produced a pair.
 ///
 /// Ordered by trustworthiness: a caller that cannot afford a wrong pair - a
-/// rollback, say - can reject anything below [`Confidence::Signature`].
+/// rollback, say - rejects anything below [`Confidence::Signature`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Confidence {
     Similarity,
