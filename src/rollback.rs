@@ -196,6 +196,11 @@ fn describe(connections: &Option<Vec<Connection>>) -> String {
 fn apply(map: &mut VmfFile, journal: &Journal, index: &Index) {
     // Keyvalue work first: it addresses entities by index, and adding or
     // removing entities invalidates every index after it.
+    //
+    // Order inside an entity is not free. `Op::Remove` carries the index the key
+    // sat at in the original, and that index only means anything once the keys
+    // the tool added are gone and the earlier keys are already back. So: values,
+    // then deletions, then insertions in ascending order.
     for op in &journal.ops {
         let Some(ent) = resolve(map, index, op.token()) else {
             continue;
@@ -204,17 +209,19 @@ fn apply(map: &mut VmfFile, journal: &Journal, index: &Index) {
             Op::Set { key, old, .. } => {
                 ent.key_values.insert(key.clone(), old.clone());
             }
-            Op::Add { key, .. } => {
-                ent.key_values.shift_remove(key);
-            }
             Op::Connections { old, .. } => ent.connections = old.clone(),
             _ => {}
         }
     }
 
-    // `Op::Remove` carries the index the key sat at in the original, and that
-    // index only means anything once the earlier keys are already back. So it
-    // goes last, ascending, rather than landing at the end of the map.
+    for op in &journal.ops {
+        if let Op::Add { key, .. } = op
+            && let Some(ent) = resolve(map, index, op.token())
+        {
+            ent.key_values.shift_remove(key);
+        }
+    }
+
     let mut restored: Vec<(&Token, usize, &String, &String)> = journal
         .ops
         .iter()
