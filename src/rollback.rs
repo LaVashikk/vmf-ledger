@@ -239,29 +239,39 @@ fn apply(map: &mut VmfFile, journal: &Journal, index: &Index) {
         ent.key_values.shift_insert(at, key.clone(), old.clone());
     }
 
-    for op in &journal.ops {
-        if let Op::AddEntity { .. } = op
-            && let Some(&(bucket, idx)) = index.get(op.token())
-        {
-            let list = list_mut(map, bucket);
-            if idx < list.len() {
-                list.remove(idx);
-            }
+    // Deletions descending, so earlier indices stay valid as we go.
+    let mut doomed: Vec<(Bucket, usize)> = journal
+        .ops
+        .iter()
+        .filter(|op| matches!(op, Op::AddEntity { .. }))
+        .filter_map(|op| index.get(op.token()).copied())
+        .collect();
+    doomed.sort_unstable_by_key(|&(_, idx)| std::cmp::Reverse(idx));
+    for (bucket, idx) in doomed {
+        let list = list_mut(map, bucket);
+        if idx < list.len() {
+            list.remove(idx);
         }
     }
 
-    for op in &journal.ops {
-        if let Op::RemoveEntity {
-            bucket,
-            idx,
-            entity,
-            ..
-        } = op
-        {
-            let list = list_mut(map, *bucket);
-            let at = (*idx).min(list.len());
-            list.insert(at, entity.clone());
-        }
+    let mut reborn: Vec<(Bucket, usize, &Entity)> = journal
+        .ops
+        .iter()
+        .filter_map(|op| match op {
+            Op::RemoveEntity {
+                bucket,
+                idx,
+                entity,
+                ..
+            } => Some((*bucket, *idx, entity)),
+            _ => None,
+        })
+        .collect();
+    reborn.sort_unstable_by_key(|&(_, idx, _)| idx);
+    for (bucket, idx, entity) in reborn {
+        let list = list_mut(map, bucket);
+        let at = idx.min(list.len());
+        list.insert(at, entity.clone());
     }
 }
 
