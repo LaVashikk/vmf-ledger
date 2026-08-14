@@ -64,7 +64,9 @@ pub enum Op {
         at: Token,
         bucket: Bucket,
         idx: usize,
-        entity: Entity,
+        /// Boxed: an entity dwarfs every other variant, and `Op` is moved
+        /// around in bulk.
+        entity: Box<Entity>,
     },
 }
 

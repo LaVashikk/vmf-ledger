@@ -142,7 +142,7 @@ fn diff_bucket(
             at: tokens.next(),
             bucket,
             idx,
-            entity: original[idx].clone(),
+            entity: Box::new(original[idx].clone()),
         });
     }
 }

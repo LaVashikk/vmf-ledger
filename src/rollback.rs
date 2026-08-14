@@ -263,7 +263,7 @@ fn apply(map: &mut VmfFile, journal: &Journal, index: &Index) {
                 idx,
                 entity,
                 ..
-            } => Some((*bucket, *idx, entity)),
+            } => Some((*bucket, *idx, entity.as_ref())),
             _ => None,
         })
         .collect();
