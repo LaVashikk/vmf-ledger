@@ -115,6 +115,17 @@ impl TrackedVmf {
         &self.original
     }
 
+    /// The pristine copy and the working one at once.
+    ///
+    /// A pass that rewrites an entity from what *another* entity used to be -
+    /// rewriting IO by the target's original class, say - needs to read one and
+    /// write the other in the same loop, which `original()` plus `DerefMut`
+    /// cannot express. The two are separate fields, so handing out both borrows
+    /// is sound.
+    pub fn split(&mut self) -> (&VmfFile, &mut VmfFile) {
+        (&self.original, &mut self.working)
+    }
+
     pub fn diff(&self) -> Diff {
         diff::diff(&self.original, &self.working)
     }
