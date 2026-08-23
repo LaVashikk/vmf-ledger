@@ -1,7 +1,8 @@
 //! Replaying a journal backwards.
 //!
 //! Only the spots the journal names are touched, so unrelated edits made in the
-//! meantime - a retextured brush, a new entity - are left alone.
+//! meantime - a retextured brush, a new entity, another tool's compile - are
+//! left alone.
 
 use vmf_forge::prelude::*;
 
@@ -17,7 +18,7 @@ pub fn is_marked(map: &VmfFile, opts: &LedgerOptions) -> bool {
     marker::find(&marks, &opts.name).is_some()
 }
 
-/// Undoes the tool's edits in place.
+/// Undoes one tool's edits in place.
 pub fn restore(
     map: &mut VmfFile,
     journal: &Journal,
@@ -57,11 +58,11 @@ pub fn restore(
     Ok(())
 }
 
-/// Rolls a map back to the state it had before the tool last touched it.
+/// Rolls a map back to the state it had before this tool last touched it.
 ///
 /// The common entry point: a compiler calls this on load so it always works
 /// from a map without its own previous output in it, whether or not it has
-/// compiled this one before.
+/// compiled this one before. Other tools' output stays where it is.
 pub fn rewind(
     map: &mut VmfFile,
     map_path: impl AsRef<std::path::Path>,

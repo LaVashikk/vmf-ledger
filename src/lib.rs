@@ -3,6 +3,34 @@
 //! Modify a map freely, then work out what changed and write enough beside the
 //! file to undo exactly those changes later - and only those, so edits made by
 //! anyone else in the meantime survive the rollback.
+//!
+//! ```no_run
+//! # use vmf_forge::prelude::*;
+//! # use vmf_ledger::{LedgerOptions, TrackedVmf, sidecar::Sidecar};
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let opts = LedgerOptions::new("my-tool", "1.0");
+//! let mut map = TrackedVmf::new(VmfFile::open("map.vmf")?);
+//!
+//! for ent in map.entities.iter_mut() {
+//!     ent.set("classname".into(), "func_detail".into());
+//! }
+//!
+//! let (map, journal) = map.finish(&opts)?;
+//! map.save("map.vmf")?;
+//! journal.write(Sidecar::path_for("map.vmf"))?;
+//! # Ok(()) }
+//! ```
+//!
+//! # More than one tool
+//!
+//! Several tools can compile the same map, and none of them has to know about
+//! the others. The name given to [`LedgerOptions::new`] is what keeps them
+//! apart: it picks the tool's section in the shared `.vdif`, its record in the
+//! map's marker, and the keyvalue that marks the entities it touched. Rolling
+//! one tool back leaves the rest exactly where they were.
+//!
+//! The name is an identity, so it must not carry a version: a version bump
+//! would otherwise orphan every map the previous build compiled.
 
 use std::ops::{Deref, DerefMut};
 

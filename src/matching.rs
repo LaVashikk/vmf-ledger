@@ -173,9 +173,9 @@ impl<'a> State<'a> {
 
     /// Pairs blocks whose `token` is equal and unique on both sides.
     ///
-    /// Ambiguity is deliberately left alone instead of resolved by picking the
-    /// first hit: two blocks sharing an id after a copy-paste are a real case,
-    /// and guessing there is how a rollback corrupts a map.
+    /// Ambiguity is deliberately left for a later stage instead of resolved by
+    /// picking the first hit: two blocks sharing an id after a copy-paste are a
+    /// real case, and guessing there is how a rollback corrupts a map.
     fn pair_on(
         &mut self,
         group: &Group,
