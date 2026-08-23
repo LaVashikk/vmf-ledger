@@ -1,7 +1,8 @@
 //! Everything that can go wrong.
 //!
 //! These messages are read by whoever runs the tool, not by whoever wrote it,
-//! so each one names the file and the tool that left the mark.
+//! so each one names the file, the tool that left the mark, and the way out.
+//! A rollback that cannot proceed is normal operation here, not a crash.
 
 use std::path::PathBuf;
 
@@ -34,14 +35,25 @@ pub enum LedgerError {
     #[error(
         "the map was compiled by {marker}, but its journal {path} is gone.\n\
          Without it the compile cannot be undone, and compiling again would build on \
-         top of the previous output"
+         top of the previous output.\n\
+         Put the .vdif back next to the map, or start from a copy of the map as it was \
+         before the first compile"
     )]
     JournalMissing { path: PathBuf, marker: String },
-    #[error("the map says {name} compiled it, but {path} holds no section for {name}")]
+    #[error(
+        "the map says {name} compiled it, but {path} holds no section for {name}.\n\
+         The journal is from another map or was written by a build that did not know \
+         this tool. Find the journal that matches, or start from a copy of the map as \
+         it was before the compile"
+    )]
     SectionMissing { path: PathBuf, name: String },
     #[error(
         "the {name} journal does not belong to this map: the marker says {in_map}, the \
-         journal is {in_journal}"
+         journal is {in_journal}.\n\
+         The .vdif is left over from another map or an older run. Rolling it back anyway \
+         would write one map's old values into another, so there is no flag for it - find \
+         the journal that matches, or start from a copy of the map as it was before the \
+         compile"
     )]
     Mismatched {
         name: String,
