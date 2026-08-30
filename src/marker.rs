@@ -122,3 +122,83 @@ fn parse_record(text: &str) -> Option<Record> {
         }),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mark(name: &str, fp: &str) -> Record {
+        Record {
+            name: name.to_string(),
+            version: "1.0".to_string(),
+            fingerprint: fp.to_string(),
+        }
+    }
+
+    #[test]
+    fn a_registry_round_trips_through_one_keyvalue() {
+        let mut world = IndexMap::new();
+        let marks = vec![mark("alpha", "aaaa"), mark("beta", "bbbb")];
+        write(&mut world, "vmf_ledger", &marks);
+
+        assert_eq!(world["vmf_ledger"], "alpha 1.0 aaaa; beta 1.0 bbbb");
+        assert_eq!(read(&world, "vmf_ledger"), marks);
+    }
+
+    /// What the single-tool format wrote: one record, tool and version glued
+    /// into one string. Already-compiled maps carry exactly this.
+    #[test]
+    fn a_lone_legacy_record_still_reads() {
+        let mut world = IndexMap::new();
+        world.insert(
+            "vmf_ledger".to_string(),
+            "pseudo-ents 0.1.0 a1b2c3d4".to_string(),
+        );
+
+        let marks = read(&world, "vmf_ledger");
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].name, "pseudo-ents");
+        assert_eq!(marks[0].fingerprint, "a1b2c3d4");
+    }
+
+    #[test]
+    fn the_last_field_is_the_fingerprint_even_with_a_spaced_name() {
+        let marks = read(
+            &IndexMap::from([("k".to_string(), "My Old Tool 2.0 deadbeef".to_string())]),
+            "k",
+        );
+        assert_eq!(marks[0].name, "My Old Tool");
+        assert_eq!(marks[0].fingerprint, "deadbeef");
+    }
+
+    #[test]
+    fn one_tool_leaving_does_not_disturb_the_other() {
+        let mut world = IndexMap::new();
+        write(
+            &mut world,
+            "vmf_ledger",
+            &[mark("alpha", "aaaa"), mark("beta", "bbbb")],
+        );
+
+        let mut marks = read(&world, "vmf_ledger");
+        remove(&mut marks, "alpha");
+        write(&mut world, "vmf_ledger", &marks);
+
+        assert_eq!(world["vmf_ledger"], "beta 1.0 bbbb");
+    }
+
+    #[test]
+    fn the_key_goes_away_with_the_last_record() {
+        let mut world = IndexMap::new();
+        write(&mut world, "vmf_ledger", &[mark("alpha", "aaaa")]);
+        write(&mut world, "vmf_ledger", &[]);
+        assert!(!world.contains_key("vmf_ledger"));
+    }
+
+    #[test]
+    fn a_name_that_would_break_the_format_is_folded() {
+        assert_eq!(slug("My Tool"), "My_Tool");
+        assert_eq!(slug("a;b"), "a_b");
+        assert_eq!(slug(""), "unnamed");
+    }
+}

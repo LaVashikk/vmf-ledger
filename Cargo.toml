@@ -2,7 +2,7 @@
 name = "vmf-ledger"
 version = "0.1.0"
 edition = "2024"
-description = "Reversible VMF edits."
+description = "Reversible VMF edits: structural diff, block matching and a sidecar journal."
 
 [dependencies]
 vmf-forge = { path = "../source-vmf", features = ["serialization"] } # temp before release
@@ -10,3 +10,6 @@ indexmap = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0"
+
+[dev-dependencies]
+pretty_assertions = "1.4"
