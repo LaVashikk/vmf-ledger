@@ -208,10 +208,10 @@ fn apply(map: &mut VmfFile, journal: &Journal, index: &Index) {
     }
 
     for op in &journal.ops {
-        if let Op::Add { key, .. } = op
-            && let Some(ent) = resolve(map, index, op.token())
-        {
-            ent.key_values.shift_remove(key);
+        if let Op::Add { key, .. } = op {
+            if let Some(ent) = resolve(map, index, op.token()) {
+                ent.key_values.shift_remove(key);
+            }
         }
     }
 

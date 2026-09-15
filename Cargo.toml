@@ -2,7 +2,13 @@
 name = "vmf-ledger"
 version = "1.0.0"
 edition = "2024"
+rust-version = "1.85"
 description = "Reversible VMF edits: structural diff, block matching and a sidecar journal."
+license = "MIT"
+repository = "https://github.com/LaVashikk/vmf-ledger"
+readme = "README.md"
+keywords = ["vmf", "source-engine", "hammer", "diff", "rollback"]
+categories = ["game-development", "parser-implementations"]
 
 [dependencies]
 source-vmf = { version = "0.5", features = ["serialization"] }
