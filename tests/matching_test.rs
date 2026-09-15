@@ -1,5 +1,5 @@
 use pretty_assertions::assert_eq;
-use vmf_forge::VmfBlock;
+use source_vmf::VmfBlock;
 use vmf_ledger::matching::*;
 
 fn block(name: &str, kvs: &[(&str, &str)]) -> VmfBlock {

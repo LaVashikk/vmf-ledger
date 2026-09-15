@@ -5,7 +5,7 @@ edition = "2024"
 description = "Reversible VMF edits: structural diff, block matching and a sidecar journal."
 
 [dependencies]
-vmf-forge = { path = "../source-vmf", features = ["serialization"] } # temp before release
+source-vmf = { version = "0.5", features = ["serialization"] }
 indexmap = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

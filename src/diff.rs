@@ -8,8 +8,8 @@
 //! cannot deliver.
 
 use indexmap::IndexMap;
-use vmf_forge::VmfBlock;
-use vmf_forge::prelude::*;
+use source_vmf::VmfBlock;
+use source_vmf::prelude::*;
 
 use crate::matching::{Confidence, MatchOptions, match_blocks};
 use crate::ops::{Bucket, Op, Token, as_written};

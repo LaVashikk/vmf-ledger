@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-use vmf_forge::prelude::*;
+use source_vmf::prelude::*;
 use vmf_ledger::{LedgerOptions, RestoreOptions, TrackedVmf, restore};
 
 fn maps() -> Vec<PathBuf> {

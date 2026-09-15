@@ -5,7 +5,7 @@
 //! anyone else in the meantime survive the rollback.
 //!
 //! ```no_run
-//! # use vmf_forge::prelude::*;
+//! # use source_vmf::prelude::*;
 //! # use vmf_ledger::{LedgerOptions, TrackedVmf, sidecar::Sidecar};
 //! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //! let opts = LedgerOptions::new("my-tool", "1.0");
@@ -34,7 +34,7 @@
 
 use std::ops::{Deref, DerefMut};
 
-use vmf_forge::prelude::*;
+use source_vmf::prelude::*;
 
 pub mod diff;
 pub mod error;

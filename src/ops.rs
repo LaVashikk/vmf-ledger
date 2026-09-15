@@ -6,7 +6,7 @@
 //! refuses rather than overwriting their work.
 
 use serde::{Deserialize, Serialize};
-use vmf_forge::prelude::*;
+use source_vmf::prelude::*;
 
 /// Which list an entity lives in. Hidden entities still compile into the BSP,
 /// so they are tracked the same way.

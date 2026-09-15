@@ -1,5 +1,5 @@
 use pretty_assertions::assert_eq;
-use vmf_forge::prelude::*;
+use source_vmf::prelude::*;
 use vmf_ledger::sidecar::{Journal, Sidecar};
 use vmf_ledger::{LedgerError, LedgerOptions, RestoreOptions, TrackedVmf, restore};
 

@@ -17,7 +17,7 @@
 
 use std::collections::HashMap;
 
-use vmf_forge::VmfBlock;
+use source_vmf::VmfBlock;
 
 /// Keyvalues that carry most of a block's identity, used by the signature stage.
 pub const DEFAULT_SIGNATURE_KEYS: &[&str] = &["classname", "targetname", "origin"];

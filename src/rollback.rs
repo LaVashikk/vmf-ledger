@@ -4,7 +4,7 @@
 //! meantime - a retextured brush, a new entity, another tool's compile - are
 //! left alone.
 
-use vmf_forge::prelude::*;
+use source_vmf::prelude::*;
 
 use crate::error::LedgerError;
 use crate::marker;
