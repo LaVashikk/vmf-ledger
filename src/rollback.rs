@@ -1,8 +1,7 @@
-//! Replaying a journal backwards.
+//! Replays journal operations backwards to restore map state.
 //!
-//! Only the spots the journal names are touched, so unrelated edits made in the
-//! meantime - a retextured brush, a new entity, another tool's compile - are
-//! left alone.
+//! Operations are verified against current values to ensure concurrent edits
+//! to other entities or properties are preserved.
 
 use source_vmf::prelude::*;
 
@@ -12,13 +11,16 @@ use crate::ops::{self, Bucket, Collision, Op, Token, VisgroupOp};
 use crate::sidecar::{Journal, Sidecar};
 use crate::{LedgerOptions, RestoreOptions};
 
-/// True when this tool has compiled the map before.
 pub fn is_marked(map: &VmfFile, opts: &LedgerOptions) -> bool {
     let marks = marker::read(&map.world.key_values, &opts.world_key);
     marker::find(&marks, &opts.name).is_some()
 }
 
-/// Undoes one tool's edits in place.
+/// Reverts edits made by a tool using the provided journal.
+///
+/// Verifies that the tool's marker matches the journal fingerprint, validates
+/// compare-and-swap invariants unless `restore_opts.force` is true, and removes
+/// marker keys and registry entries upon completion.
 pub fn restore(
     map: &mut VmfFile,
     journal: &Journal,
@@ -42,8 +44,7 @@ pub fn restore(
 
     let index = index_markers(map, &journal.marker_key)?;
 
-    // Checked in full before anything is written: a rollback that bailed out
-    // halfway would leave the map in a state no journal describes.
+    // Pre-validate compare-and-swap guards to ensure atomic rollback.
     let collisions = check(map, journal, &index);
     if !collisions.is_empty() && !restore_opts.force {
         return Err(LedgerError::Collisions(collisions));
@@ -58,11 +59,10 @@ pub fn restore(
     Ok(())
 }
 
-/// Rolls a map back to the state it had before this tool last touched it.
+/// Reverts changes made by a tool if the map contains its registry marker.
 ///
-/// The common entry point: a compiler calls this on load so it always works
-/// from a map without its own previous output in it, whether or not it has
-/// compiled this one before. Other tools' output stays where it is.
+/// Loads the journal from the companion sidecar file and invokes [`restore`].
+/// Returns `Ok(true)` if rolled back, or `Ok(false)` if the map was not marked.
 pub fn rewind(
     map: &mut VmfFile,
     map_path: impl AsRef<std::path::Path>,
@@ -75,9 +75,7 @@ pub fn rewind(
     };
     let mark = mark.to_string();
 
-    // The map says we compiled it, so compiling again without rolling back
-    // first would build on top of the previous output. Worth its own error:
-    // "no such file" tells a mapper nothing about a file they never heard of.
+    // Map carries a marker for this tool, but companion sidecar is missing.
     let path = Sidecar::path_for(map_path);
     if !path.exists() {
         return Err(LedgerError::JournalMissing { path, marker: mark });
@@ -169,8 +167,7 @@ fn check(map: &VmfFile, journal: &Journal, index: &Index) -> Vec<Collision> {
                 }
             }
             Op::Connections { new, .. } => {
-                // Compared as the file holds them, so the guard behaves the
-                // same whether the map came off disk or straight from a pass.
+                // Compare in normalized serialization format.
                 let found = ops::as_written(ent.connections.as_ref());
                 if &found != new {
                     out.push(collision(
@@ -195,13 +192,8 @@ fn describe(connections: &Option<Vec<Connection>>) -> String {
 }
 
 fn apply(map: &mut VmfFile, journal: &Journal, index: &Index) {
-    // Keyvalue work first: it addresses entities by index, and adding or
-    // removing entities invalidates every index after it.
-    //
-    // Order inside an entity is not free. `Op::Remove` carries the index the key
-    // sat at in the original, and that index only means anything once the keys
-    // the tool added are gone and the earlier keys are already back. So: values,
-    // then deletions, then insertions in ascending order.
+    // 1. Mutate keyvalues and connections first while entity indices remain stable.
+    // 2. Order of key restoration: Set/Connections -> Add removals -> Remove insertions (ascending index).
     for op in &journal.ops {
         let Some(ent) = resolve(map, index, op.token()) else {
             continue;
@@ -240,7 +232,7 @@ fn apply(map: &mut VmfFile, journal: &Journal, index: &Index) {
         ent.key_values.shift_insert(at, key.clone(), old.clone());
     }
 
-    // Deletions descending, so earlier indices stay valid as we go.
+    // Delete added entities in descending index order to preserve earlier indices.
     let mut doomed: Vec<(Bucket, usize)> = journal
         .ops
         .iter()
@@ -276,17 +268,13 @@ fn apply(map: &mut VmfFile, journal: &Journal, index: &Index) {
     }
 }
 
-/// Takes back the visgroups the tool made.
-///
-/// Runs after [`apply`], so the entities the tool created - and their
-/// membership with them - are already gone by the time occupancy is counted.
+// Removes tool-created visgroups if they are now empty.
+// Executed after entity deletions so created entities are already removed before occupancy check.
 fn undo_visgroups(map: &mut VmfFile, journal: &Journal) {
     for op in &journal.visgroups {
         match op {
             VisgroupOp::Add { id, .. } => {
-                // Somebody moved their own work in here. The group was ours to
-                // create, not to take away with someone else still in it, and
-                // deleting it would strand them in `_orphaned hidden`.
+                // Retain visgroup if other objects were assigned to it after creation.
                 if !occupied(map, *id) {
                     map.visgroups.remove_by_id(*id);
                 }

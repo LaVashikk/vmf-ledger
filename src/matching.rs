@@ -22,10 +22,7 @@ use source_vmf::VmfBlock;
 /// Keyvalues that carry most of a block's identity, used by the signature stage.
 pub const DEFAULT_SIGNATURE_KEYS: &[&str] = &["classname", "targetname", "origin"];
 
-/// Which stage produced a pair.
-///
-/// Ordered by trustworthiness: a caller that cannot afford a wrong pair - a
-/// rollback, say - rejects anything below [`Confidence::Signature`].
+/// Stage that produced a matched pair, ordered by confidence level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Confidence {
     Similarity,
@@ -56,18 +53,15 @@ pub struct Matching {
 
 #[derive(Debug, Clone)]
 pub struct MatchOptions<'a> {
-    /// Key holding a token the tool wrote itself. The only stage that survives
-    /// arbitrary editing, so it is tried first. `None` skips the stage.
+    /// Key holding an entity marker token. Evaluated first; `None` skips this stage.
     pub marker_key: Option<&'a str>,
     pub signature_keys: &'a [&'a str],
-    /// Keys the similarity stage must ignore.
+    /// Keys excluded from similarity scoring.
     ///
-    /// An identifier is unique per block, so rarity weighting hands it the
-    /// largest weight of all - and once stage 2 has failed it is known not to
-    /// match, so that weight lands entirely in the union and drags every score
-    /// towards zero. The marker key is dropped for the same reason.
+    /// Unique identifiers distort rarity weighting when exact matching fails,
+    /// artificially deflating Jaccard similarity scores.
     pub ignore_keys: &'a [&'a str],
-    /// Two blocks scoring below this are treated as unrelated.
+    /// Minimum similarity score required to accept a match.
     pub min_score: f32,
 }
 
@@ -82,10 +76,9 @@ impl Default for MatchOptions<'_> {
     }
 }
 
-/// Pairs `old` against `new`.
+/// Matches blocks between `old` and `new` across cascade stages.
 ///
-/// Blocks are only ever paired with blocks of the same [`VmfBlock::name`], so a
-/// `solid` can never be mistaken for an `entity` however similar their keys are.
+/// Blocks are partitioned by [`VmfBlock::name`]; matching never crosses different block types.
 pub fn match_blocks(old: &[VmfBlock], new: &[VmfBlock], opts: &MatchOptions<'_>) -> Matching {
     let mut state = State::new(old, new);
 
@@ -140,8 +133,7 @@ fn kv(block: &VmfBlock, key: &str) -> Option<String> {
     block.key_values.get(key).cloned()
 }
 
-/// The signature keys that are actually present, joined. `None` when the block
-/// carries none of them, which makes the stage a no-op for it.
+// Returns joined keyvalue pairs for configured signature keys present on the block.
 fn signature(block: &VmfBlock, keys: &[&str]) -> Option<String> {
     let mut parts = Vec::new();
     for key in keys {
@@ -171,11 +163,8 @@ impl<'a> State<'a> {
         }
     }
 
-    /// Pairs blocks whose `token` is equal and unique on both sides.
-    ///
-    /// Ambiguity is deliberately left for a later stage instead of resolved by
-    /// picking the first hit: two blocks sharing an id after a copy-paste are a
-    /// real case, and guessing there is how a rollback corrupts a map.
+    // Pairs blocks whose derived token is identical and unique on both sides.
+    // Ambiguous tokens occurring multiple times on either side are deferred to later stages.
     fn pair_on(
         &mut self,
         group: &Group,
@@ -213,7 +202,6 @@ impl<'a> State<'a> {
         }
     }
 
-    /// Greedy best-first pairing of whatever is left.
     fn pair_by_similarity(&mut self, group: &Group, min_score: f32, ignored: &[&str]) {
         let olds: Vec<usize> = group
             .old
@@ -237,8 +225,7 @@ impl<'a> State<'a> {
             ignored,
         );
 
-        // The one quadratic step in the module, written as map/collect so it
-        // becomes `par_iter` the day a real map shows it matters.
+        // Compute pairwise similarity scores above the threshold.
         let mut scored: Vec<(f32, usize, usize)> = olds
             .iter()
             .flat_map(|&i| news.iter().map(move |&j| (i, j)))
@@ -280,12 +267,7 @@ impl<'a> State<'a> {
     }
 }
 
-/// Inverse document frequency over keyvalue pairs.
-///
-/// A pair every block carries (`"visgroupshown" "1"`) says nothing about
-/// identity; one only two blocks carry (`"origin" "512 0 64"`) says almost
-/// everything. Weighting by rarity is what keeps the score meaningful on maps
-/// where most entities are near-identical props.
+// Inverse document frequency weighting over keyvalue pairs.
 struct Weights<'a> {
     df: HashMap<(&'a str, &'a str), u32>,
     ignored: &'a [&'a str],
@@ -310,8 +292,7 @@ impl<'a> Weights<'a> {
     }
 
     fn weight(&self, k: &str, v: &str) -> f32 {
-        // A miss means the pair was ignored or came from another corpus; either
-        // way treating it as unique is the conservative reading.
+        // Unseen keyvalue pairs default to count 1 (maximum weight).
         let df = self.df.get(&(k, v)).copied().unwrap_or(1);
         1.0 / df as f32
     }

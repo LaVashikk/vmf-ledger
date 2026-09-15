@@ -1,11 +1,8 @@
-//! Working out what a tool changed, by comparing the map to its pristine copy.
+//! Computes differences between pristine and modified VMF maps to produce rollback operations.
 //!
-//! Only entities are tracked. That is not a shortcut around hard work but the
-//! honest boundary of what can be rolled back: `Side` and friends are typed
-//! structs rather than keyvalue maps, so a generic op cannot address a field
-//! inside them. Anything else that changed is reported as untracked and the
-//! caller is expected to refuse the export rather than promise a rollback it
-//! cannot deliver.
+//! Only entity keyvalues and connections are tracked. Changes to typed structures
+//! (`Side`, `Solid`, top-level map properties) cannot be expressed as generic inverse
+//! operations and are reported in [`Diff::untracked`].
 
 use indexmap::IndexMap;
 use source_vmf::VmfBlock;
@@ -14,12 +11,10 @@ use source_vmf::prelude::*;
 use crate::matching::{Confidence, MatchOptions, match_blocks};
 use crate::ops::{Bucket, Op, Token, as_written};
 
-/// Where a marker keyvalue has to be written for a rollback to find the entity
-/// again.
+/// Target entity location and token for stamping marker keyvalues.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mark {
     pub bucket: Bucket,
-    /// Index into the working file's list.
     pub idx: usize,
     pub token: Token,
 }
@@ -28,10 +23,13 @@ pub struct Mark {
 pub struct Diff {
     pub ops: Vec<Op>,
     pub marks: Vec<Mark>,
-    /// Human-readable descriptions of changes outside the tracked scope.
+    /// Descriptions of changes outside the tracked scope.
     pub untracked: Vec<String>,
 }
 
+/// Computes operations to transform `working` back into `original`.
+///
+/// Returns operations, entity marker targets, and descriptions of unsupported changes.
 pub fn diff(original: &VmfFile, working: &VmfFile) -> Diff {
     let mut out = Diff::default();
     let mut tokens = Tokens::default();
@@ -55,7 +53,7 @@ pub fn diff(original: &VmfFile, working: &VmfFile) -> Diff {
     out
 }
 
-/// Sequential, so a sidecar reads the same way twice for the same input.
+// Deterministic sequential token generator.
 #[derive(Default)]
 struct Tokens(u32);
 
@@ -73,8 +71,7 @@ fn diff_bucket(
     tokens: &mut Tokens,
     out: &mut Diff,
 ) {
-    // Matching only reads keyvalues, so the children are left off: converting
-    // whole entities here would clone every solid in the map for nothing.
+    // Extract keyvalues only; avoids cloning geometry solids during block matching.
     let old_blocks: Vec<VmfBlock> = original.iter().map(match_view).collect();
     let new_blocks: Vec<VmfBlock> = working.iter().map(match_view).collect();
     let matching = match_blocks(&old_blocks, &new_blocks, &MatchOptions::default());
@@ -101,12 +98,8 @@ fn diff_bucket(
             continue;
         }
 
-        // A pair the matcher guessed at is not good enough to build a rollback
-        // on: the ops would be applied to whichever entity carries the marker,
-        // and if the guess was wrong that writes one entity's old values into
-        // another. Only pairs the matcher is certain about count - a guess that
-        // changed nothing is still fine, which is why this comes after the
-        // emptiness check.
+        // Rollback requires deterministic pairing. Matches below Signature confidence
+        // are rejected to avoid applying operations to unrelated entities.
         if pair.confidence < Confidence::Signature {
             out.untracked.push(format!(
                 "entity {}: matched only by similarity ({:.2}), too weak to roll back",
@@ -189,8 +182,7 @@ fn diff_key_values(
     }
 }
 
-/// Tokens are only known once an entity is known to have changed, so ops are
-/// built with an empty one and stamped afterwards.
+// Operations are initialized with empty tokens and stamped once entity assignment is determined.
 fn set_token(op: &mut Op, token: &str) {
     match op {
         Op::Set { at, .. }

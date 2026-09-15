@@ -511,7 +511,10 @@ fn a_marked_map_without_its_journal_is_an_error() {
         matches!(err, LedgerError::JournalMissing { .. }),
         "{message}"
     );
-    assert!(message.contains(TOOL), "сказано, чей это след: {message}");
+    assert!(
+        message.contains(TOOL),
+        "tool name should be included in error: {message}"
+    );
     assert!(message.contains(".vdif"), "{message}");
 
     std::fs::remove_dir_all(&dir).ok();
@@ -525,7 +528,7 @@ fn a_marked_map_without_its_journal_is_an_error() {
 fn entities_sharing_an_id_still_roll_back() {
     let mut original = map();
     let mut twin = original.entities.0[0].clone();
-    twin.set("id".into(), "10".into()); // тот же id, что у первой
+    twin.set("id".into(), "10".into()); // Duplicate id of first entity
     twin.set("targetname".into(), "door_b".into());
     twin.set("origin".into(), "512 0 0".into());
     original.entities.0.push(twin);
@@ -549,15 +552,10 @@ fn entities_sharing_an_id_still_roll_back() {
     assert_eq!(text(&reopened), pristine);
 }
 
-/// A pair the matcher only guessed at cannot carry a rollback: the ops are
-/// applied to whichever entity ends up with the marker, so a wrong guess writes
-/// one entity's old values into another. Better to refuse the export.
+// Matches below Signature confidence cannot be used for rollback and must block export.
 #[test]
 fn a_pair_matched_only_by_similarity_blocks_the_export() {
-    // Никакого `id`, `classname`, `targetname` и `origin` — стадии 2 и 3
-    // пропускают такие блоки, остаётся только похожесть.
-    // Достаточно общих ключей, чтобы после одной правки счёт остался выше
-    // порога и пара всё-таки возникла - но только на четвёртой стадии.
+    // Omit id and signature keys so matching falls through to the similarity stage.
     let faceless = |mark: &str| {
         let mut ent = Entity::default();
         ent.set("shared_a".into(), "1".into());
@@ -572,7 +570,7 @@ fn a_pair_matched_only_by_similarity_blocks_the_export() {
     original.entities.0.push(faceless("first"));
 
     let mut tracked = TrackedVmf::new(original);
-    tracked.entities.0[0].set("shared_a".into(), "изменено".into());
+    tracked.entities.0[0].set("shared_a".into(), "modified".into());
 
     let err = tracked.finish(&opts()).unwrap_err();
     let message = err.to_string();

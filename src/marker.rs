@@ -1,18 +1,11 @@
-//! The registry of tools stamped into `world`.
+//! Tool registry stored in the `world` entity keyvalues.
 //!
-//! Several tools can compile the same map, so the mark is a list and not a
-//! single record: each tool owns one entry, reads the others without touching
-//! them, and drops only its own on rollback.
-//!
-//! One `world` keyvalue holds the lot:
+//! Multiple tools record execution records in a single semicolon-delimited keyvalue
+//! on `world` to minimize tooling noise while preserving execution order:
 //!
 //! ```text
 //! "vmf_ledger" "pseudo-ents 0.1.0 a1b2c3d4e5f60718; cube-init 1.0 0011223344556677"
 //! ```
-//!
-//! A key per tool would work as well, but `world` is a list a mapper actually
-//! opens in Hammer, and one line of tooling noise there is enough. The order of
-//! the records is the order the tools stamped the map in.
 
 use indexmap::IndexMap;
 
@@ -22,10 +15,9 @@ const RECORD_SEP: char = ';';
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     pub name: String,
-    /// Informational only: what wrote this. Never part of the tool's identity,
-    /// or a version bump would orphan every map compiled by the previous one.
+    /// Tool version string.
     pub version: String,
-    /// Ties the record to one exact journal section.
+    /// Hash of the associated journal section.
     pub fingerprint: String,
 }
 
@@ -39,11 +31,9 @@ impl std::fmt::Display for Record {
     }
 }
 
-/// A name that survives a trip through the registry and a keyvalue name.
+/// Sanitizes a tool name for record serialization and keyvalue names.
 ///
-/// Whitespace separates the fields of a record and `;` separates the records,
-/// so a tool called `My Tool` would silently corrupt both. Folding them into
-/// `_` costs nothing and keeps the failure impossible rather than rare.
+/// Replaces whitespace, semicolons, and quotes with `_`. Returns `"unnamed"` if empty.
 pub fn slug(name: &str) -> String {
     let mut out: String = name
         .chars()
@@ -61,8 +51,9 @@ pub fn slug(name: &str) -> String {
     out
 }
 
-/// Reads the registry. An unparsable record is dropped rather than fought over:
-/// what matters is finding our own, and a record we cannot read is not ours.
+/// Parses registry records from the specified key in `world`.
+///
+/// Unparsable records are ignored.
 pub fn read(world: &IndexMap<String, String>, key: &str) -> Vec<Record> {
     let Some(value) = world.get(key) else {
         return Vec::new();
@@ -70,7 +61,7 @@ pub fn read(world: &IndexMap<String, String>, key: &str) -> Vec<Record> {
     value.split(RECORD_SEP).filter_map(parse_record).collect()
 }
 
-/// Writes the registry back, dropping the key entirely once nobody is left.
+/// Serializes records to the specified key in `world`, removing the key if `marks` is empty.
 pub fn write(world: &mut IndexMap<String, String>, key: &str, marks: &[Record]) {
     if marks.is_empty() {
         world.shift_remove(key);
@@ -81,8 +72,7 @@ pub fn write(world: &mut IndexMap<String, String>, key: &str, marks: &[Record]) 
         .map(Record::to_string)
         .collect::<Vec<_>>()
         .join("; ");
-    // `insert` keeps an existing key where it is, so re-stamping does not move
-    // the line around in `world` and show up as an edit.
+    // Preserve existing key position in IndexMap to avoid spurious line movement in world.
     world.insert(key.to_string(), text);
 }
 
@@ -90,7 +80,6 @@ pub fn find<'a>(marks: &'a [Record], name: &str) -> Option<&'a Record> {
     marks.iter().find(|mark| mark.name == name)
 }
 
-/// Adds the record, or replaces the one this tool left last time.
 pub fn upsert(marks: &mut Vec<Record>, mark: Record) {
     match marks.iter_mut().find(|it| it.name == mark.name) {
         Some(slot) => *slot = mark,
@@ -102,10 +91,7 @@ pub fn remove(marks: &mut Vec<Record>, name: &str) {
     marks.retain(|mark| mark.name != name);
 }
 
-/// A record is `name version fingerprint`, and the fingerprint is always last.
-///
-/// Read from the right, so a name with spaces in it - written by a build before
-/// [`slug`] existed, or by hand - still resolves to the right fingerprint.
+// Parses `name [version] fingerprint` from right to left to support legacy records with spaces.
 fn parse_record(text: &str) -> Option<Record> {
     let fields: Vec<&str> = text.split_whitespace().collect();
     match fields.len() {
@@ -145,8 +131,7 @@ mod tests {
         assert_eq!(read(&world, "vmf_ledger"), marks);
     }
 
-    /// What the single-tool format wrote: one record, tool and version glued
-    /// into one string. Already-compiled maps carry exactly this.
+    // Legacy v1 single-tool format: single record with concatenated name and version.
     #[test]
     fn a_lone_legacy_record_still_reads() {
         let mut world = IndexMap::new();

@@ -1,18 +1,9 @@
-//! The `.vdif` journal that lives next to the map.
+//! Serialization of `.vdif` journal sidecar files.
 //!
-//! Hammer rewrites a map from the blocks it knows and drops everything else, so
-//! a journal kept inside the VMF would not survive the map being opened once.
-//! Only markers stay in the file; the operations themselves live here.
+//! Stored alongside VMF maps because Hammer discards unrecognised blocks on save.
 //!
-//! JSON rather than KeyValues: op values are arbitrary original keyvalues, and
-//! `source-kv` writes a value as `"{}"` with no escaping, so a quote or a
-//! newline in one would corrupt the file.
-//!
-//! One file, one section per tool. Two compilers on the same map would
-//! otherwise take turns overwriting each other's only way back, and the second
-//! one would not even notice. Writing is therefore read-modify-write: a tool
-//! replaces its own section and leaves the rest of the file exactly as it
-//! found it.
+//! Uses JSON instead of KeyValues because `source-kv` does not escape quotes or newlines
+//! in values. Multiple tools share a single sidecar using section-based read-modify-write.
 
 use std::fs;
 use std::io::ErrorKind;
@@ -26,8 +17,7 @@ use crate::ops::{Op, VisgroupOp};
 pub const EXTENSION: &str = "vdif";
 const FORMAT_VERSION: u32 = 2;
 
-/// One tool's half of the journal: everything needed to undo that tool's last
-/// run, and nothing about anyone else's.
+/// Rollback operations and metadata for a single tool.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Journal {
     /// The tool's stable identity, matching its record in the map's marker.
@@ -63,16 +53,14 @@ impl Journal {
         }
     }
 
-    /// Nothing to undo, so nothing worth writing or marking.
     pub fn is_empty(&self) -> bool {
         self.ops.is_empty() && self.visgroups.is_empty()
     }
 
-    /// Ties the tool's record in the map to this exact section.
+    /// Computes a hash identifying this journal section.
     ///
-    /// Taken over the section alone, never the whole file: another tool
-    /// compiling the same map appends its own section, and that must not
-    /// invalidate a rollback that has nothing to do with it.
+    /// Calculated over this tool's section alone so concurrent tool records in the
+    /// shared sidecar do not invalidate map markers.
     pub fn fingerprint(&self) -> String {
         match &self.legacy_fingerprint {
             Some(carried) => carried.clone(),
@@ -80,23 +68,20 @@ impl Journal {
         }
     }
 
-    /// This tool's section of the journal beside the map, if it has one.
+    /// Reads the journal section for `name` from the sidecar at `path`.
     pub fn read(path: impl AsRef<Path>, name: &str) -> Result<Option<Self>, LedgerError> {
         Ok(Sidecar::read(path)?.take(name))
     }
 
-    /// Merges this section into the file, leaving every other tool's alone.
+    /// Writes this journal section into the sidecar at `path`, preserving other tool sections.
     pub fn write(&self, path: impl AsRef<Path>) -> Result<(), LedgerError> {
         let path = path.as_ref();
         let mut sidecar = match Sidecar::read(path) {
             Ok(sidecar) => sidecar,
-            // No file yet is the normal first compile.
             Err(LedgerError::SidecarIo { source, .. }) if source.kind() == ErrorKind::NotFound => {
                 Sidecar::default()
             }
-            // Anything else and we stop: the file may hold another tool's only
-            // way back, and overwriting it blind is exactly what this format
-            // exists to prevent.
+            // Refuse to overwrite corrupt or unreadable sidecar to prevent data loss.
             Err(source) => {
                 return Err(LedgerError::SidecarClobber {
                     path: path.to_path_buf(),
@@ -109,13 +94,11 @@ impl Journal {
     }
 }
 
-/// The `.vdif` file: a format version and the tools that have compiled the map.
+/// Top-level `.vdif` sidecar holding version and tool sections.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sidecar {
     pub version: u32,
-    /// A list rather than a map keyed by name: the name already lives in the
-    /// section, and two of them would be one more thing that can disagree. The
-    /// order is the order the tools first wrote themselves in.
+    /// Tool journal sections stored in sequential insertion order.
     pub tools: Vec<Journal>,
 }
 
@@ -129,7 +112,7 @@ impl Default for Sidecar {
 }
 
 impl Sidecar {
-    /// `maps/foo.vmf` -> `maps/foo.vdif`.
+    /// Returns the companion `.vdif` path for the given VMF file path.
     pub fn path_for(vmf_path: impl AsRef<Path>) -> PathBuf {
         vmf_path.as_ref().with_extension(EXTENSION)
     }
@@ -142,7 +125,6 @@ impl Sidecar {
         self.tools.into_iter().find(|journal| journal.name == name)
     }
 
-    /// Adds a section, or replaces the one that tool wrote last time.
     pub fn upsert(&mut self, journal: Journal) {
         match self.tools.iter_mut().find(|it| it.name == journal.name) {
             Some(slot) => *slot = journal,
@@ -161,8 +143,7 @@ impl Sidecar {
             source,
         };
 
-        // The version has to be read before the rest, because it decides what
-        // the rest even looks like.
+        // Inspect format version before deserializing payload.
         #[derive(Deserialize)]
         struct Probe {
             version: u32,
@@ -195,10 +176,7 @@ impl Sidecar {
     }
 }
 
-/// The single-tool format, read only.
-///
-/// Maps compiled before the registry existed still carry a v1 journal beside
-/// them, and refusing to read it would strand every one of them.
+// Legacy single-tool journal format (v1).
 #[derive(Serialize, Deserialize)]
 struct V1 {
     version: u32,
@@ -209,14 +187,10 @@ struct V1 {
 
 impl V1 {
     fn lift(self) -> Journal {
-        // The fingerprint sitting in that map was taken over this exact text.
-        // Reproduce it rather than recompute it: a v2 section serialises
-        // differently, and every already-compiled map would stop matching its
-        // own journal.
+        // Preserve original v1 fingerprint so existing map markers remain valid.
         let carried = format!("{:016x}", fnv1a(&to_json(&self)));
 
-        // v1 glued name and version into one string, and the world marker was
-        // split on the last space, so that is where they part here too.
+        // v1 combined name and version into a single space-separated string.
         let (name, version) = match self.tool.rsplit_once(' ') {
             Some((name, version)) => (name.to_string(), version.to_string()),
             None => (self.tool.clone(), String::new()),
@@ -233,14 +207,12 @@ impl V1 {
     }
 }
 
-/// Pretty-printed on purpose: the file is meant to be readable when a rollback
-/// goes wrong, and nobody pays for the bytes of a sidecar.
+// Formatted with indentation for readability on disk.
 fn to_json<T: Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).expect("ops are plain data")
 }
 
-/// FNV-1a. `DefaultHasher` is explicitly not stable across Rust releases, and
-/// this value is written to disk.
+// 64-bit FNV-1a hash; provides deterministic hashes across Rust compiler releases.
 fn fnv1a(data: &str) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in data.as_bytes() {

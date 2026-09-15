@@ -1,8 +1,4 @@
-//! Everything that can go wrong.
-//!
-//! These messages are read by whoever runs the tool, not by whoever wrote it,
-//! so each one names the file, the tool that left the mark, and the way out.
-//! A rollback that cannot proceed is normal operation here, not a crash.
+//! Error types for journal serialization, map verification, and rollback operations.
 
 use std::path::PathBuf;
 

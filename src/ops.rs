@@ -1,15 +1,12 @@
-//! The inverse operations a rollback replays.
+//! Inverse operations recorded for rollback execution.
 //!
-//! Every op carries both what the tool wrote and what stood there before, which
-//! makes a rollback a compare-and-swap: if the current value is not what the
-//! tool left behind, someone else has edited that exact spot and the rollback
-//! refuses rather than overwriting their work.
+//! Operations record previous and replacement values to enable compare-and-swap
+//! verification during rollback, preventing unintended overwrites of concurrent edits.
 
 use serde::{Deserialize, Serialize};
 use source_vmf::prelude::*;
 
-/// Which list an entity lives in. Hidden entities still compile into the BSP,
-/// so they are tracked the same way.
+/// Target entity collection within a VMF file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Bucket {
@@ -17,86 +14,66 @@ pub enum Bucket {
     Hidden,
 }
 
-/// A tool-written token identifying one entity across arbitrary editing.
-///
-/// Entity `id` is not enough: Hammer renumbers on save. The token is written
-/// into the entity as a keyvalue and removed again on rollback.
+/// Unique token stored as an entity keyvalue to identify entities across Hammer saves.
 pub type Token = String;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum Op {
-    /// The tool changed a keyvalue.
     Set {
         at: Token,
         key: String,
         old: String,
         new: String,
     },
-    /// The tool added a keyvalue; rolling back removes it.
-    Add { at: Token, key: String, new: String },
-    /// The tool removed a keyvalue; rolling back re-inserts it at `idx`.
-    ///
-    /// The index matters: keyvalue order is the order of lines in the file, and
-    /// restoring a key at the end would leave a needlessly noisy diff.
+    Add {
+        at: Token,
+        key: String,
+        new: String,
+    },
+    /// Re-inserts a deleted keyvalue at its original index to preserve file ordering.
     Remove {
         at: Token,
         idx: usize,
         key: String,
         old: String,
     },
-    /// The tool touched the connections list. Stored whole rather than per
-    /// connection: the lists are short and a whole-list swap has no ordering
-    /// pitfalls.
+    /// Replaces the connections block in full to avoid ordering ambiguities.
     Connections {
         at: Token,
         old: Option<Vec<Connection>>,
         new: Option<Vec<Connection>>,
     },
-    /// The tool created an entity; rolling back deletes it.
-    AddEntity { at: Token, bucket: Bucket },
-    /// The tool deleted an entity; rolling back re-inserts it.
-    ///
-    /// `idx` is where it sat in the original file. A rollback clamps to the end
-    /// of the current list, so position is best-effort when the file has since
-    /// grown or shrunk.
+    AddEntity {
+        at: Token,
+        bucket: Bucket,
+    },
     RemoveEntity {
         at: Token,
         bucket: Bucket,
         idx: usize,
-        /// Boxed: an entity dwarfs every other variant, and `Op` is moved
-        /// around in bulk.
+        /// Boxed to avoid enum size inflation.
         entity: Box<Entity>,
     },
 }
 
-/// A change to the file itself rather than to one entity.
-///
-/// Kept out of [`Op`] on purpose: every `Op` is addressed by the token of the
-/// entity it belongs to, and a visgroup belongs to no entity. Squeezing it in
-/// would mean a variant with a token that addresses nothing and a special case
-/// in every match that resolves one.
+/// Map-level operations not scoped to a specific entity token.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum VisgroupOp {
-    /// The tool created a visgroup; rolling back deletes it, along with the
-    /// membership of anything still sitting in it.
     Add { id: i32, name: String },
 }
 
-/// Connections in the form the file will actually hold them.
+/// Normalizes connections to match KeyValues serialization order.
 ///
-/// A `connections` block is a KeyValues map, so writing it groups everything
-/// sharing an output name: a list left interleaved comes back grouped. Both the
-/// recorded value and the guard have to speak that form, or a rollback fires on
-/// a difference the file cannot even represent.
+/// KeyValues serialization groups connections by output name. Normalization ensures
+/// compare-and-swap equality checks operate on identical representations.
 pub fn as_written(connections: Option<&Vec<Connection>>) -> Option<Vec<Connection>> {
     let list = connections.map(Vec::as_slice).unwrap_or_default();
     Connection::from_key_values(&Connection::to_key_values(list))
 }
 
 impl Op {
-    /// The entity this op addresses.
     pub fn token(&self) -> &str {
         match self {
             Op::Set { at, .. }
@@ -109,7 +86,7 @@ impl Op {
     }
 }
 
-/// A spot where the map no longer holds what the tool left behind.
+/// Describes a compare-and-swap mismatch encountered during rollback validation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Collision {
     pub token: Token,
