@@ -153,9 +153,9 @@ dependencies = [
 
 [[package]]
 name = "source-kv"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "339456387df11879040ca93b57ccc4c08bf42a7defd432cd65f433be218889d3"
+checksum = "43f41341ce8ca394e5982261954c33385ff59843ed501652c0c417e555187ec9"
 dependencies = [
  "indexmap",
  "serde",
@@ -164,9 +164,9 @@ dependencies = [
 
 [[package]]
 name = "source-vmf"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "027652e53002b1de3a2ca89134996b358eb6f57198ac597ef147f1b2c39b95ac"
+checksum = "7f04f8a91637b5be54ce054d87515c5ea593ce3d58ffac3ed7f1f17866cde181"
 dependencies = [
  "derive_more",
  "indexmap",
@@ -225,7 +225,7 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
 name = "vmf-ledger"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "indexmap",
  "pretty_assertions",

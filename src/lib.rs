@@ -33,8 +33,7 @@
 //! information should be passed separately in `version`.
 
 use std::ops::{Deref, DerefMut};
-
-use source_vmf::prelude::*;
+pub use source_vmf::prelude::*;
 
 pub mod diff;
 pub mod error;
